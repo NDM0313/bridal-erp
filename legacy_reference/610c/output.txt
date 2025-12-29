@@ -1,0 +1,67 @@
+﻿
+  Dropping all tables ........................................... 191ms DONE
+
+   INFO  Preparing database.  
+
+  Creating migration table ....................................... 15ms DONE
+
+   INFO  Running migrations.  
+
+  2014_10_12_000000_create_users_table ........................... 21ms DONE
+  2014_10_12_100000_create_password_resets_table ................. 25ms DONE
+  2016_06_01_000001_create_oauth_auth_codes_table ................ 28ms DONE
+  2016_06_01_000002_create_oauth_access_tokens_table ............. 33ms DONE
+  2016_06_01_000003_create_oauth_refresh_tokens_table ............ 48ms DONE
+  2016_06_01_000004_create_oauth_clients_table ................... 23ms DONE
+  2016_06_01_000005_create_oauth_personal_access_clients_table ... 22ms DONE
+  2017_07_05_071953_create_currencies_table ....................... 6ms DONE
+  2017_07_05_073658_create_business_table ........................ 91ms DONE
+  2017_07_22_075923_add_business_id_users_table .................. 39ms DONE
+  2017_07_23_113209_create_brands_table .......................... 81ms DONE
+  2017_07_26_083429_create_permission_tables .................... 327ms DONE
+  2017_07_26_110000_create_tax_rates_table ....................... 86ms DONE
+  2017_07_26_122313_create_units_table ........................... 78ms DONE
+  2017_07_27_075706_create_contacts_table ....................... 127ms DONE
+  2017_08_04_071038_create_categories_table ...................... 89ms DONE
+  2017_08_08_115903_create_products_table ....................... 316ms DONE
+  2017_08_09_061616_create_variation_templates_table ............. 44ms DONE
+  2017_08_09_061638_create_variation_value_templates_table ....... 52ms DONE
+  2017_08_10_061146_create_product_variations_table .............. 63ms DONE
+  2017_08_10_061216_create_variations_table ...................... 95ms DONE
+  2017_08_19_054827_create_transactions_table ................... 190ms DONE
+  2017_08_31_073533_create_purchase_lines_table ................. 179ms DONE
+  2017_10_15_064638_create_transaction_payments_table ............ 38ms DONE
+  2017_10_31_065621_add_default_sales_tax_to_business_table ...... 76ms DONE
+  2017_11_20_051930_create_table_group_sub_taxes ................. 76ms DONE
+  2017_11_20_063603_create_transaction_sell_lines ............... 143ms DONE
+  2017_11_21_064540_create_barcodes_table ........................ 34ms DONE
+  2017_11_23_181237_create_invoice_schemes_table ................. 41ms DONE
+  2017_12_25_122822_create_business_locations_table .............. 43ms DONE
+  2017_12_25_160253_add_location_id_to_transactions_table ........ 53ms DONE
+  2017_12_25_163227_create_variation_location_details_table ..... 102ms DONE
+  2018_01_04_115627_create_sessions_table ........................ 21ms DONE
+  2018_01_05_112817_create_invoice_layouts_table ................. 40ms DONE
+  2018_01_06_112303_add_invoice_scheme_id_and_invoice_layout_id_to_business_locations  81ms DONE
+  2018_01_08_104124_create_expense_categories_table .............. 44ms DONE
+  2018_01_08_123327_modify_transactions_table_for_expenses ........ 1ms FAIL
+
+   RuntimeException 
+
+  Changing columns for table "transactions" requires Doctrine DBAL. Please install the doctrine/dbal package.
+
+  at C:\xampp\htdocs\610c\vendor\laravel\framework\src\Illuminate\Database\Schema\Grammars\ChangeColumn.php:30
+     26▕      */
+     27▕     public static function compile($grammar, Blueprint $blueprint, Fluent $command, Connection $connection)
+     28▕     {
+     29▕         if (! $connection->isDoctrineAvailable()) {
+  ➜  30▕             throw new RuntimeException(sprintf(
+     31▕                 'Changing columns for table "%s" requires Doctrine DBAL. Please install the doctrine/dbal package.',
+     32▕                 $blueprint->getTable()
+     33▕             ));
+     34▕         }
+
+  1   C:\xampp\htdocs\610c\vendor\laravel\framework\src\Illuminate\Database\Schema\Grammars\Grammar.php:86
+      Illuminate\Database\Schema\Grammars\ChangeColumn::compile(Object(Illuminate\Database\Schema\Grammars\MySqlGrammar), Object(Illuminate\Database\Schema\Blueprint), Object(Illuminate\Support\Fluent), Object(Illuminate\Database\MySqlConnection))
+
+  2   C:\xampp\htdocs\610c\vendor\laravel\framework\src\Illuminate\Database\Schema\Blueprint.php:135
+      Illuminate\Database\Schema\Grammars\Grammar::compileChange(Object(Illuminate\Database\Schema\Blueprint), Object(Illuminate\Support\Fluent), Object(Illuminate\Database\MySqlConnection))

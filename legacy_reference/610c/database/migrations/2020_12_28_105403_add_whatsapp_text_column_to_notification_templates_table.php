@@ -1,0 +1,30 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     *
+     * @return void
+     */
+    public function up()
+    {
+        try { Schema::table('notification_templates', function (Blueprint $table) {
+            $table->text('whatsapp_text')->nullable();
+            $table->boolean('auto_send_wa_notif')->default(0);
+        }); } catch (\Exception $e) { /* Column or index may not exist */ }
+    }
+
+    /**
+     * Reverse the migrations.
+     *
+     * @return void
+     */
+    public function down()
+    {
+    }
+};

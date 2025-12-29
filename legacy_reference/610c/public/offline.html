@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>610C - Offline</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .offline-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            padding: 40px;
+            text-align: center;
+            max-width: 500px;
+        }
+
+        .offline-icon {
+            font-size: 80px;
+            margin-bottom: 20px;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 16px;
+            font-size: 32px;
+        }
+
+        .offline-status {
+            color: #666;
+            font-size: 16px;
+            margin-bottom: 30px;
+            line-height: 1.6;
+        }
+
+        .offline-tips {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            text-align: left;
+        }
+
+        .offline-tips h3 {
+            color: #333;
+            margin-bottom: 12px;
+            font-size: 16px;
+        }
+
+        .offline-tips ul {
+            list-style: none;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .offline-tips li {
+            margin-bottom: 8px;
+            padding-left: 20px;
+            position: relative;
+        }
+
+        .offline-tips li:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #4CAF50;
+            font-weight: bold;
+        }
+
+        .offline-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: #2196F3;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #1976D2;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(33, 150, 243, 0.3);
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
+            transform: translateY(-2px);
+        }
+
+        .offline-features {
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 1px solid #eee;
+        }
+
+        .offline-features h3 {
+            color: #333;
+            margin-bottom: 16px;
+            font-size: 16px;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .feature-card {
+            background: #f9f9f9;
+            padding: 16px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .feature-icon {
+            font-size: 32px;
+            margin-bottom: 8px;
+        }
+
+        .feature-label {
+            color: #666;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .online-indicator {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            background: #FFC107;
+            color: #333;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .online-indicator.online {
+            background: #4CAF50;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="offline-container">
+        <div class="offline-icon">📡</div>
+        <h1>You're Offline</h1>
+        <p class="offline-status">
+            You appear to be offline. But don't worry! You can still access cached data and continue working.
+        </p>
+
+        <div class="offline-tips">
+            <h3>💡 What You Can Do:</h3>
+            <ul>
+                <li>View cached sales history</li>
+                <li>Check inventory (last synced data)</li>
+                <li>Browse reports and dashboards</li>
+                <li>Create new transactions (synced when online)</li>
+                <li>Update your profile</li>
+            </ul>
+        </div>
+
+        <div class="offline-actions">
+            <button class="btn-primary" onclick="goHome()">Go to Home</button>
+            <button class="btn-secondary" onclick="checkConnection()">Check Connection</button>
+        </div>
+
+        <div class="offline-features">
+            <h3>📲 Offline Features Available:</h3>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">💰</div>
+                    <div class="feature-label">POS Sales</div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📦</div>
+                    <div class="feature-label">Inventory</div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <div class="feature-label">Reports</div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">👤</div>
+                    <div class="feature-label">Profile</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="online-indicator" id="onlineIndicator">
+        🌐 You are offline
+    </div>
+
+    <script>
+        // Check connection status
+        function checkConnection() {
+            fetch('/610c/public/health-check', { method: 'HEAD', mode: 'no-cors' })
+                .then(() => {
+                    updateConnectionStatus(true);
+                })
+                .catch(() => {
+                    updateConnectionStatus(false);
+                });
+        }
+
+        // Update UI based on connection status
+        function updateConnectionStatus(isOnline) {
+            const indicator = document.getElementById('onlineIndicator');
+            if (isOnline) {
+                indicator.textContent = '✓ You are online';
+                indicator.classList.add('online');
+                setTimeout(() => {
+                    window.location.href = '/610c/public/home';
+                }, 1000);
+            } else {
+                indicator.textContent = '📡 Still offline';
+                indicator.classList.remove('online');
+            }
+        }
+
+        // Go to home
+        function goHome() {
+            window.location.href = '/610c/public/home';
+        }
+
+        // Listen for online/offline events
+        window.addEventListener('online', () => {
+            updateConnectionStatus(true);
+        });
+
+        window.addEventListener('offline', () => {
+            updateConnectionStatus(false);
+        });
+
+        // Check on load
+        checkConnection();
+    </script>
+</body>
+</html>
