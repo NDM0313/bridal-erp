@@ -140,3 +140,34 @@ export async function getProductById(id: number): Promise<Product | null> {
   return data;
 }
 
+/**
+ * Duplicate a product
+ * Creates a copy with "(Copy)" suffix in name and new SKU
+ */
+export async function duplicateProduct(productId: number): Promise<Product> {
+  const original = await getProductById(productId);
+  
+  if (!original) {
+    throw new Error('Product not found');
+  }
+
+  // Generate new SKU
+  const timestamp = Date.now();
+  const newSku = `${original.sku}-COPY-${timestamp}`;
+  const newName = `${original.name} (Copy)`;
+
+  // Create duplicate
+  const duplicateData: CreateProductDto = {
+    name: newName,
+    sku: newSku,
+    type: original.type,
+    unit_id: original.unit_id,
+    secondary_unit_id: original.secondary_unit_id || undefined,
+    category_id: original.category_id || undefined,
+    brand_id: original.brand_id || undefined,
+    alert_quantity: original.alert_quantity || undefined,
+  };
+
+  return await createProduct(duplicateData);
+}
+

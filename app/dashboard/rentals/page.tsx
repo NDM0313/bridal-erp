@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Plus, MoreVertical, Calendar, ArrowRight, Loader2, Eye, Package, CheckCircle, Printer } from 'lucide-react';
+import { Plus, MoreVertical, Calendar, ArrowRight, Loader2, Eye, Package, CheckCircle, Printer, LayoutList } from 'lucide-react';
 import { format, differenceInDays } from 'date-fns';
 import { ModernDashboardLayout } from '@/components/layout/ModernDashboardLayout';
 import { Button } from '@/components/ui/Button';
@@ -28,6 +28,21 @@ export default function RentalsPage() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
   const [selectedBookingForReturn, setSelectedBookingForReturn] = useState<RentalBooking | null>(null);
+  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
+  
+  // Calculate stats
+  const activeRentals = bookings.filter(b => b.status === 'reserved' || b.status === 'out').length;
+  const today = new Date().toISOString().split('T')[0];
+  const returnsDueToday = bookings.filter(b => b.status === 'out' && b.return_date === today).length;
+  const overdueItems = bookings.filter(b => {
+    if (b.status === 'out' && b.return_date) {
+      return new Date(b.return_date) < new Date();
+    }
+    return false;
+  }).length;
+  const totalRevenue = bookings
+    .filter(b => b.status === 'returned')
+    .reduce((sum, b) => sum + ((b as any).total_amount || (b as any).rental_amount || 0), 0);
 
   // Fetch bookings
   const fetchBookings = async () => {
@@ -126,20 +141,74 @@ export default function RentalsPage() {
     <ModernDashboardLayout>
       <div className="space-y-6 p-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-white">Rental Management</h1>
-            <p className="text-sm text-gray-400 mt-1">Manage rental bookings, returns, and inventory</p>
+            <h1 className="text-2xl font-bold text-white tracking-tight">Rental Management</h1>
+            <p className="text-sm text-gray-400 mt-1">Track active bookings, returns, and inventory availability.</p>
           </div>
-          <Button
-            variant="primary"
-            onClick={() => setIsDrawerOpen(true)}
-            className="flex items-center gap-2"
-          >
-            <Plus size={18} />
-            New Booking
-          </Button>
+          <div className="flex items-center gap-3">
+            {/* View Toggle - Segmented Control */}
+            <div className="flex items-center gap-1 bg-gray-800/50 rounded-lg p-1 border border-gray-700">
+              <button
+                onClick={() => setViewMode('list')}
+                className={cn(
+                  'px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2',
+                  viewMode === 'list'
+                    ? 'bg-gray-800 text-white shadow-sm'
+                    : 'text-gray-400 hover:text-gray-300'
+                )}
+              >
+                <LayoutList size={16} />
+                List
+              </button>
+              <button
+                onClick={() => setViewMode('calendar')}
+                className={cn(
+                  'px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2',
+                  viewMode === 'calendar'
+                    ? 'bg-gray-800 text-white shadow-sm'
+                    : 'text-gray-400 hover:text-gray-300'
+                )}
+              >
+                <Calendar size={16} />
+                Calendar
+              </button>
+            </div>
+            {/* New Booking Button - Pink Theme */}
+            <Button
+              variant="primary"
+              onClick={() => setIsDrawerOpen(true)}
+              className="flex items-center gap-2 bg-pink-600 hover:bg-pink-500 shadow-pink-600/20"
+            >
+              <Plus size={18} />
+              New Rental Booking
+            </Button>
+          </div>
         </div>
+
+        {/* Quick Stats - Only visible in List View */}
+        {viewMode === 'list' && (
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
+              <p className="text-gray-500 text-sm">Active Rentals</p>
+              <h3 className="text-2xl font-bold text-white mt-1">{activeRentals}</h3>
+            </div>
+            <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
+              <p className="text-gray-500 text-sm">Returns Due Today</p>
+              <h3 className="text-2xl font-bold text-orange-400 mt-1">{returnsDueToday}</h3>
+            </div>
+            <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
+              <p className="text-gray-500 text-sm">Overdue Items</p>
+              <h3 className="text-2xl font-bold text-red-500 mt-1">{overdueItems}</h3>
+            </div>
+            <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
+              <p className="text-gray-500 text-sm">Total Revenue</p>
+              <h3 className="text-2xl font-bold text-green-500 mt-1">
+                Rs. {totalRevenue.toLocaleString()}
+              </h3>
+            </div>
+          </div>
+        )}
 
         {/* Status Tabs */}
         <div className="border-b border-gray-800">
@@ -165,8 +234,13 @@ export default function RentalsPage() {
           </div>
         </div>
 
-        {/* Table */}
-        {loading ? (
+        {/* Main Content - List or Calendar View */}
+        {viewMode === 'calendar' ? (
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+            <p className="text-gray-400 text-center">Calendar view coming soon...</p>
+            {/* TODO: Implement RentalCalendar component */}
+          </div>
+        ) : loading ? (
           <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl p-6">
             <Skeleton className="h-64" />
           </div>

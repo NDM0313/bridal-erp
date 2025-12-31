@@ -43,6 +43,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { CreateNewButton } from '@/components/ui/CreateNewButton';
 import { cn } from '@/lib/utils';
 import { RoleGuard } from '@/components/auth/RoleGuard';
 // Note: Install framer-motion if not already installed: npm install framer-motion
@@ -63,8 +64,8 @@ const navigation: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { id: 'pos', label: 'POS', href: '/pos', icon: ShoppingCart, permission: 'canCreateSales' },
   { id: 'products', label: 'Products', href: '/products', icon: Package, permission: 'canViewProducts' },
-  { id: 'sales', label: 'Sales', href: '/sales', icon: FileText, permission: 'canViewSales' },
-  { id: 'purchases', label: 'Purchases', href: '/purchases', icon: ShoppingBag, permission: 'canViewPurchases' },
+  { id: 'sales', label: 'Sales', href: '/dashboard/sales', icon: FileText, permission: 'canViewSales' },
+  { id: 'purchases', label: 'Purchases', href: '/purchases', icon: ShoppingBag },
   { id: 'rentals', label: 'Rentals', href: '/dashboard/rentals', icon: Shirt },
   { id: 'studio', label: 'Studio', href: '/dashboard/studio', icon: Scissors },
   { id: 'vendors', label: 'Vendors', href: '/dashboard/vendors', icon: Truck },
@@ -73,9 +74,9 @@ const navigation: NavItem[] = [
   { id: 'transfers', label: 'Stock Transfers', href: '/transfers', icon: ArrowLeftRight, permission: 'canTransferStock' },
   { id: 'adjustments', label: 'Stock Adjustments', href: '/adjustments', icon: ClipboardList, permission: 'canAdjustStock' },
   { id: 'reports', label: 'Reports', href: '/reports', icon: BarChart3, permission: 'canViewBasicReports' },
-  { id: 'contacts', label: 'Contacts', href: '/contacts', icon: Contact },
-  { id: 'users', label: 'Users', href: '/users', icon: Users, permission: 'canManageUsers' },
-  { id: 'settings', label: 'Settings', href: '/settings', icon: Settings, permission: 'canManageBusiness' },
+  { id: 'contacts', label: 'Contacts', href: '/dashboard/contacts', icon: Contact },
+  { id: 'users', label: 'Users', href: '/dashboard/users', icon: Users, permission: 'canManageUsers' },
+  { id: 'settings', label: 'Settings', href: '/dashboard/settings', icon: Settings, permission: 'canManageBusiness' },
 ];
 
 export function ModernDashboardLayout({ children }: { children: React.ReactNode }) {
@@ -286,6 +287,7 @@ export function ModernDashboardLayout({ children }: { children: React.ReactNode 
               <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
             </button>
             <div className="h-6 w-px bg-slate-800 hidden md:block"></div>
+            <CreateNewButton />
             <RoleGuard permission="canCreateSales">
               <Button 
                 variant="primary" 

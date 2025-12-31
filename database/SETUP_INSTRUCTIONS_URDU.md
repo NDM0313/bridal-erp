@@ -1,194 +1,87 @@
-# Supabase Database Setup - Complete Guide (اردو)
+# Database Setup Instructions (Urdu/Hindi)
 
-## 🎯 مقصد
+## Problem: Error aa raha hai aur 42 tables already hain
 
-یہ گائیڈ آپ کو Supabase میں تمام database tables شامل کرنے میں مدد کرے گی۔
+Agar aapko error aa raha hai, to pehle yeh steps follow karo:
 
----
-
-## 📋 فائل کا نام
-
-**`database/COMPLETE_DATABASE_SETUP.sql`**
-
-یہ فائل تمام tables, functions, اور RLS policies شامل کرتی ہے۔
-
----
-
-## 🚀 استعمال کا طریقہ
-
-### Step 1: Supabase Dashboard کھولیں
-
-1. https://app.supabase.com پر جائیں
-2. اپنا project select کریں
-3. بائیں sidebar میں **SQL Editor** پر کلک کریں
-
-### Step 2: SQL فائل کھولیں
-
-1. `my-pos-system/database/COMPLETE_DATABASE_SETUP.sql` فائل کھولیں
-2. **پوری فائل** کا content copy کریں (Ctrl+A, Ctrl+C)
-
-### Step 3: SQL Editor میں Paste کریں
-
-1. Supabase SQL Editor میں paste کریں (Ctrl+V)
-2. **Run** button پر کلک کریں (یا Ctrl+Enter)
-
-### Step 4: Verification
-
-SQL Editor میں یہ query run کریں:
-
+### Step 1: Database Check Karo
 ```sql
--- Check all tables
-SELECT table_name
-FROM information_schema.tables
-WHERE table_schema = 'public'
-ORDER BY table_name;
+-- DIAGNOSE_DATABASE.sql run karo
+-- Yeh check karega ke kaun se tables/columns missing hain
 ```
 
-**Expected Result**: آپ کو یہ tables نظر آنی چاہئیں:
-- businesses
-- business_locations
-- user_profiles
-- units
-- brands
-- categories
-- products
-- variations
-- variation_location_details
-- transactions
-- transaction_sell_lines
-- transaction_purchase_lines
-- stock_adjustment_lines
-- stock_transfer_lines
-- contacts
-- organizations
-- organization_users
-- organization_subscriptions
-- billing_history
-- subscription_events
-- error_logs
-- payment_failure_logs
-- sale_failure_logs
-- support_agents
-- support_access_logs
-- system_settings
-- notification_templates
-- notifications
-- automation_rules
-- audit_logs
+### Step 2: Missing Tables Add Karo
+
+Agar `financial_accounts`, `rental_bookings`, ya `production_orders` tables missing hain:
+
+```sql
+-- MODERN_ERP_EXTENSION.sql run karo
+-- Yeh missing tables aur columns add kar dega
+```
+
+### Step 3: Demo Data Insert Karo
+
+```sql
+-- DEMO_DATA_FIXED.sql run karo
+-- Yeh automatically missing tables handle karega
+```
 
 ---
 
-## ✅ کیا یہ فائل Safe ہے؟
+## Quick Fix
 
-**ہاں!** یہ فائل:
-- ✅ `IF NOT EXISTS` استعمال کرتی ہے (existing tables کو delete نہیں کرے گی)
-- ✅ Existing data کو delete نہیں کرے گی
-- ✅ Multiple times run کر سکتے ہیں
-- ✅ صرف missing tables create کرے گی
+### Option 1: Sab kuch check karo
+1. `DIAGNOSE_DATABASE.sql` run karo
+2. Missing tables dekh lo
+3. `MODERN_ERP_EXTENSION.sql` run karo (agar kuch missing hai)
+4. `DEMO_DATA_FIXED.sql` run karo
 
----
+### Option 2: Direct Fix
+Agar aapko pata hai ke kya missing hai:
 
-## ⚠️ اگر Error آئے
-
-### Error: "relation already exists"
-- **مطلب**: Table پہلے سے موجود ہے
-- **حل**: یہ normal ہے، script skip کر دے گی
-
-### Error: "permission denied"
-- **مطلب**: آپ کے پاس admin access نہیں ہے
-- **حل**: Service role key استعمال کریں یا admin سے رابطہ کریں
-
-### Error: "foreign key constraint"
-- **مطلب**: Dependencies missing ہیں
-- **حل**: پوری فائل دوبارہ run کریں (order matter کرتا ہے)
+```sql
+-- Pehle MODERN_ERP_EXTENSION.sql run karo
+-- Phir DEMO_DATA_INSERT.sql run karo
+```
 
 ---
 
-## 📊 کون سی Tables شامل ہیں؟
+## Common Issues
 
-### Core Tables (بنیادی)
-- businesses
-- business_locations
-- user_profiles
+### Issue 1: "Table does not exist"
+**Solution:** `MODERN_ERP_EXTENSION.sql` run karo
 
-### Product Tables (پروڈکٹ)
-- units
-- brands
-- categories
-- products
-- variations
-- variation_location_details (STOCK)
+### Issue 2: "Column does not exist" (is_rentable, rental_price, etc.)
+**Solution:** `MODERN_ERP_EXTENSION.sql` run karo (yeh products table mein rental columns add karega)
 
-### Transaction Tables (ٹرانزیکشن)
-- transactions
-- transaction_sell_lines
-- transaction_purchase_lines
-- stock_adjustment_lines
-- stock_transfer_lines
+### Issue 3: "No business found"
+**Solution:** Pehle business create karo:
+```sql
+INSERT INTO businesses (name, owner_id) 
+VALUES ('Your Business Name', 'your-user-uuid'::UUID);
+```
 
-### Contact Tables (کنسٹومر/سپلائر)
-- contacts
-
-### SaaS Tables (SaaS features)
-- organizations
-- organization_users
-- organization_subscriptions
-- billing_history
-- subscription_events
-
-### Monitoring Tables (نگرانی)
-- error_logs
-- payment_failure_logs
-- sale_failure_logs
-
-### Support Tables (سپورٹ)
-- support_agents
-- support_access_logs
-
-### Other Tables (دیگر)
-- system_settings
-- notification_templates
-- notifications
-- automation_rules
-- audit_logs
+### Issue 4: "No user_profile found"
+**Solution:** User profile create karo:
+```sql
+INSERT INTO user_profiles (user_id, business_id, role)
+VALUES ('your-user-uuid'::UUID, 1, 'owner');
+```
 
 ---
 
-## 🔧 Functions شامل ہیں
+## Files Order
 
-- `get_user_business_id()` - User کا business ID نکالتا ہے
-- `get_user_organization_id()` - User کا organization ID نکالتا ہے
-
----
-
-## 🔒 Security (RLS)
-
-تمام tables پر **Row Level Security (RLS)** enable ہے۔
-یہ یقینی بناتا ہے کہ:
-- Users صرف اپنے business کا data دیکھ سکتے ہیں
-- Cross-business data access نہیں ہو سکتا
+1. **DIAGNOSE_DATABASE.sql** - Check karo ke kya missing hai
+2. **MODERN_ERP_EXTENSION.sql** - Missing tables/columns add karo
+3. **DEMO_DATA_FIXED.sql** - Demo data insert karo (smart version)
+   - Ya **DEMO_DATA_INSERT.sql** - Full demo data (agar sab ready hai)
 
 ---
 
-## ✅ Verification Checklist
+## Summary
 
-Setup کے بعد یہ checks کریں:
-
-- [ ] تمام tables create ہو گئیں
-- [ ] Functions کام کر رہی ہیں
-- [ ] RLS enabled ہے
-- [ ] کوئی error نہیں ہے
-
----
-
-## 📝 Next Steps
-
-1. ✅ Tables create ہو گئیں
-2. ✅ Bootstrap data add کریں (اگر چاہیں)
-3. ✅ Test user create کریں
-4. ✅ Frontend test کریں
-
----
-
-**Setup complete!** ✅
-
+- **42 tables hain?** → Good! Bas check karo ke required tables hain
+- **Error aa raha hai?** → `DIAGNOSE_DATABASE.sql` run karo
+- **Missing tables?** → `MODERN_ERP_EXTENSION.sql` run karo
+- **Demo data chahiye?** → `DEMO_DATA_FIXED.sql` run karo

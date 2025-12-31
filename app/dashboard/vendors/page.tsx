@@ -2,10 +2,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, MoreVertical, Phone, Mail, User, Edit, Trash2, Loader2 } from 'lucide-react';
+import { Plus, MoreVertical, Phone, Mail, User, Edit, Trash2, Loader2, Search, MapPin, Filter } from 'lucide-react';
 import { ModernDashboardLayout } from '@/components/layout/ModernDashboardLayout';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { Input } from '@/components/ui/Input';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table';
 import { DropdownMenu, DropdownMenuItem } from '@/components/ui/DropdownMenu';
 import { Skeleton } from '@/components/placeholders/SkeletonLoader';
@@ -27,6 +28,7 @@ export default function VendorsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Fetch vendors from Supabase
   const fetchVendors = async () => {
@@ -124,15 +126,32 @@ export default function VendorsPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-white">Vendor Management</h1>
-            <p className="text-sm text-gray-400 mt-1">Manage your Dyers, Tailors, and production vendors</p>
+            <p className="text-sm text-gray-400 mt-1">Manage your dyers, tailors, and material suppliers.</p>
           </div>
           <Button
             variant="primary"
             onClick={() => setIsAddModalOpen(true)}
-            className="flex items-center gap-2"
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white"
           >
             <Plus size={18} />
             Add Vendor
+          </Button>
+        </div>
+
+        {/* Search and Filter */}
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+            <Input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search vendors..."
+              className="bg-gray-800 border-gray-700 text-white pl-10"
+            />
+          </div>
+          <Button variant="outline" className="bg-gray-800 border-gray-700 text-white hover:bg-gray-700">
+            <Filter size={18} />
           </Button>
         </div>
 
@@ -163,105 +182,98 @@ export default function VendorsPage() {
             />
           </div>
         ) : (
-          <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl overflow-hidden">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
             <Table>
               <TableHeader>
-                <TableRow className="bg-gray-900/50">
-                  <TableHead>Name</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Phone</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                <TableRow className="bg-gray-800/50">
+                  <TableHead className="text-gray-400">Vendor Name</TableHead>
+                  <TableHead className="text-gray-400">Service Type</TableHead>
+                  <TableHead className="text-gray-400">Contact</TableHead>
+                  <TableHead className="text-gray-400">Location</TableHead>
+                  <TableHead className="text-gray-400">Active Orders</TableHead>
+                  <TableHead className="text-gray-400">Status</TableHead>
+                  <TableHead className="text-right text-gray-400">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {vendors.map((vendor) => (
-                  <TableRow
-                    key={vendor.id}
-                    className="cursor-pointer hover:bg-gray-800/50 transition-colors"
-                    onClick={() => router.push(`/dashboard/vendors/${vendor.id}`)}
-                  >
-                    {/* Name with Avatar */}
-                    <TableCell>
-                      <div className="flex items-center gap-3">
-                        <Avatar className="h-8 w-8">
-                          <AvatarFallback className="bg-gray-800 text-gray-400 text-xs">
-                            {vendor.name.substring(0, 2).toUpperCase()}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div>
-                          <p className="text-white font-medium text-sm">{vendor.name}</p>
-                        </div>
-                      </div>
-                    </TableCell>
+                {vendors
+                  .filter((vendor) =>
+                    vendor.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    getVendorRole(vendor).toLowerCase().includes(searchTerm.toLowerCase())
+                  )
+                  .map((vendor) => {
+                    // Mock active orders count (should come from API)
+                    const activeOrders = Math.floor(Math.random() * 15);
+                    const isBusy = activeOrders > 10;
+                    const location = vendor.address_line_1?.includes('Location:')
+                      ? vendor.address_line_1.replace('Location: ', '')
+                      : 'Lahore'; // Default location
 
-                    {/* Role */}
-                    <TableCell>
-                      <Badge variant="outline" className="bg-blue-900/20 text-blue-400 border-blue-900/50">
-                        {getVendorRole(vendor)}
-                      </Badge>
-                    </TableCell>
+                    return (
+                      <TableRow
+                        key={vendor.id}
+                        className="hover:bg-gray-800/30 transition-colors"
+                      >
+                        {/* Vendor Name */}
+                        <TableCell>
+                          <p className="text-white font-medium">{vendor.name}</p>
+                        </TableCell>
 
-                    {/* Phone */}
-                    <TableCell>
-                      {vendor.mobile ? (
-                        <div className="flex items-center gap-2">
-                          <Phone size={14} className="text-gray-500" />
-                          <span className="text-gray-300 text-sm">{vendor.mobile}</span>
-                        </div>
-                      ) : (
-                        <span className="text-gray-600 text-sm">—</span>
-                      )}
-                    </TableCell>
+                        {/* Service Type */}
+                        <TableCell>
+                          <Badge variant="outline" className="bg-gray-800 text-gray-400 border-gray-700">
+                            {getVendorRole(vendor)}
+                          </Badge>
+                        </TableCell>
 
-                    {/* Email */}
-                    <TableCell>
-                      {vendor.email ? (
-                        <div className="flex items-center gap-2">
-                          <Mail size={14} className="text-gray-500" />
-                          <span className="text-gray-300 text-sm">{vendor.email}</span>
-                        </div>
-                      ) : (
-                        <span className="text-gray-600 text-sm">—</span>
-                      )}
-                    </TableCell>
+                        {/* Contact */}
+                        <TableCell>
+                          {vendor.mobile ? (
+                            <div className="flex items-center gap-2">
+                              <Phone size={14} className="text-gray-500" />
+                              <span className="text-gray-300 text-sm">{vendor.mobile}</span>
+                            </div>
+                          ) : (
+                            <span className="text-gray-600 text-sm">—</span>
+                          )}
+                        </TableCell>
 
-                    {/* Status */}
-                    <TableCell>
-                      <Badge variant="outline" className="bg-green-900/20 text-green-400 border-green-900/50">
-                        Active
-                      </Badge>
-                    </TableCell>
+                        {/* Location */}
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <MapPin size={14} className="text-gray-500" />
+                            <span className="text-gray-300 text-sm">{location}</span>
+                          </div>
+                        </TableCell>
 
-                    {/* Actions */}
-                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                      <DropdownMenu
-                        trigger={
+                        {/* Active Orders */}
+                        <TableCell>
+                          <span className="text-white font-medium">{activeOrders}</span>
+                        </TableCell>
+
+                        {/* Status */}
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              isBusy
+                                ? 'bg-orange-500/10 text-orange-500 border-orange-500/20'
+                                : 'bg-green-500/10 text-green-500 border-green-500/20'
+                            )}
+                          >
+                            {isBusy ? 'Busy' : 'Active'}
+                          </Badge>
+                        </TableCell>
+
+                        {/* Actions */}
+                        <TableCell className="text-right">
                           <button className="p-1 rounded hover:bg-gray-800 text-gray-400 hover:text-white transition-colors">
                             <MoreVertical size={18} />
                           </button>
-                        }
-                      >
-                        <DropdownMenuItem onClick={() => router.push(`/dashboard/vendors/${vendor.id}`)}>
-                          <User size={14} className="inline mr-2" />
-                          View Details
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleEdit(vendor)}>
-                          <Edit size={14} className="inline mr-2" />
-                          Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => handleDelete(vendor.id)}
-                          className="text-red-400"
-                        >
-                          <Trash2 size={14} className="inline mr-2" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
               </TableBody>
             </Table>
           </div>

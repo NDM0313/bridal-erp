@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Loader2 } from 'lucide-react';
+import { Plus, Loader2, Scissors, MoreVertical, Droplets, Shirt } from 'lucide-react';
 import { ModernDashboardLayout } from '@/components/layout/ModernDashboardLayout';
 import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
 import { Skeleton } from '@/components/placeholders/SkeletonLoader';
 import { EmptyState } from '@/components/placeholders/EmptyState';
 import { ProductionOrderCard } from '@/components/studio/ProductionOrderCard';
@@ -14,6 +15,8 @@ import apiClient, { getErrorMessage, ApiResponse } from '@/lib/api/apiClient';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Package } from 'lucide-react';
+import { format } from 'date-fns';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
 type KanbanColumn = {
   id: string;
@@ -22,40 +25,36 @@ type KanbanColumn = {
   color: string;
   bgColor: string;
   borderColor: string;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
 };
 
 const KANBAN_COLUMNS: KanbanColumn[] = [
   {
-    id: 'pending',
-    title: 'Pending / Fabric',
-    status: 'new',
-    color: 'text-gray-400',
-    bgColor: 'bg-gray-900/30',
-    borderColor: 'border-gray-800',
-  },
-  {
-    id: 'dyeing',
-    title: 'In Dyeing',
-    status: 'dyeing',
+    id: 'cutting',
+    title: 'Cutting',
+    status: 'new', // Using 'new' for cutting stage
     color: 'text-blue-400',
     bgColor: 'bg-blue-900/10',
     borderColor: 'border-blue-900/50',
+    icon: Scissors,
+  },
+  {
+    id: 'dyeing',
+    title: 'Dyeing',
+    status: 'dyeing',
+    color: 'text-purple-400',
+    bgColor: 'bg-purple-900/10',
+    borderColor: 'border-purple-900/50',
+    icon: Droplets,
   },
   {
     id: 'stitching',
-    title: 'In Stitching',
+    title: 'Stitching',
     status: 'stitching',
-    color: 'text-yellow-400',
-    bgColor: 'bg-yellow-900/10',
-    borderColor: 'border-yellow-900/50',
-  },
-  {
-    id: 'ready',
-    title: 'Ready / QC',
-    status: 'completed',
-    color: 'text-green-400',
-    bgColor: 'bg-green-900/10',
-    borderColor: 'border-green-900/50',
+    color: 'text-orange-400',
+    bgColor: 'bg-orange-900/10',
+    borderColor: 'border-orange-900/50',
+    icon: Shirt,
   },
 ];
 
@@ -127,12 +126,12 @@ export default function StudioPage() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-white">Custom Studio</h1>
-            <p className="text-sm text-gray-400 mt-1">Track production orders through manufacturing stages</p>
+            <h1 className="text-2xl font-bold text-white">Production Pipeline</h1>
+            <p className="text-sm text-gray-400 mt-1">Track orders through manufacturing stages.</p>
           </div>
-          <Button variant="primary" onClick={handleNewOrder} className="flex items-center gap-2">
+          <Button variant="primary" onClick={handleNewOrder} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white">
             <Plus size={18} />
-            Create Custom Order
+            New Order
           </Button>
         </div>
 
@@ -176,27 +175,36 @@ export default function StudioPage() {
             />
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="flex gap-4 overflow-x-auto pb-4">
             {KANBAN_COLUMNS.map((column) => {
               const columnOrders = getOrdersForColumn(column.status);
+              const Icon = column.icon;
 
               return (
                 <div
                   key={column.id}
                   className={cn(
-                    'rounded-lg border p-4 space-y-3 min-h-[400px]',
+                    'flex-shrink-0 w-80 rounded-lg border p-4 space-y-3 min-h-[500px]',
                     column.bgColor,
                     column.borderColor
                   )}
                 >
                   {/* Column Header */}
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className={cn('text-sm font-semibold uppercase tracking-wide', column.color)}>
-                      {column.title}
-                    </h3>
-                    <span className={cn('text-xs font-bold px-2 py-1 rounded-full', column.bgColor, column.color)}>
-                      {columnOrders.length}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <Icon className={column.color} size={20} />
+                      <h3 className={cn('text-sm font-semibold', column.color)}>
+                        {column.title}
+                      </h3>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold px-2 py-1 rounded-full bg-gray-800 text-gray-400">
+                        {columnOrders.length}
+                      </span>
+                      <button className="text-gray-400 hover:text-white">
+                        <MoreVertical size={16} />
+                      </button>
+                    </div>
                   </div>
 
                   {/* Orders in this column */}
@@ -206,13 +214,54 @@ export default function StudioPage() {
                         <p className="text-xs text-gray-600">No orders</p>
                       </div>
                     ) : (
-                      columnOrders.map((order) => (
-                        <ProductionOrderCard
-                          key={order.id}
-                          order={order}
-                          onClick={() => handleOrderClick(order)}
-                        />
-                      ))
+                      columnOrders.map((order) => {
+                        const customerName = order.customer?.name || 'No Customer';
+                        const initials = customerName
+                          .split(' ')
+                          .map((word) => word[0])
+                          .join('')
+                          .toUpperCase()
+                          .substring(0, 2);
+                        const orderDate = order.deadline_date
+                          ? format(new Date(order.deadline_date), 'dd MMM')
+                          : format(new Date(order.created_at), 'dd MMM');
+
+                        return (
+                          <div
+                            key={order.id}
+                            onClick={() => handleOrderClick(order)}
+                            className="bg-gray-800 border border-gray-700 rounded-lg p-4 cursor-pointer hover:border-gray-600 hover:shadow-lg transition-all"
+                          >
+                            {/* Order ID */}
+                            <div className="flex items-center justify-between mb-2">
+                              <p className="text-xs font-mono text-gray-400">ORD-{order.id}</p>
+                              <Badge variant="outline" className="bg-purple-500/10 text-purple-400 border-purple-500/20 text-xs">
+                                WHOLESALE
+                              </Badge>
+                            </div>
+
+                            {/* Product Name */}
+                            <p className="text-sm font-bold text-white mb-2">
+                              {order.item_name || 'Custom Order'}
+                            </p>
+
+                            {/* Customer Name */}
+                            <p className="text-xs text-gray-400 mb-2">{customerName}</p>
+
+                            {/* Date */}
+                            <p className="text-xs text-gray-500 mb-3">{orderDate}</p>
+
+                            {/* Customer Initial Badge */}
+                            <div className="flex justify-end">
+                              <Avatar className="h-6 w-6">
+                                <AvatarFallback className="bg-gray-700 text-gray-300 text-xs">
+                                  {initials}
+                                </AvatarFallback>
+                              </Avatar>
+                            </div>
+                          </div>
+                        );
+                      })
                     )}
                   </div>
                 </div>

@@ -117,42 +117,45 @@ export default function LoginPage() {
     setIsDemoLoading(true);
 
     try {
-      // FIX: Try demo accounts, but if none work, create a temporary demo session
-      // or redirect to registration with helpful message
-      const demoAccounts = [
-        { email: 'demo@pos.com', password: 'demo123456' },
-        { email: 'admin@admin.com', password: 'password' },
-        { email: 'test@test.com', password: 'test123456' },
-      ];
-
-      let loginSuccess = false;
-      let lastError: Error | null = null;
-
-      for (const account of demoAccounts) {
-        try {
-          const result = await signIn(account.email, account.password);
-          
-          if (result && result.session) {
-            loginSuccess = true;
-            // Redirect to dashboard after successful login
-            router.push('/dashboard');
-            return; // Exit early on success
-          }
-        } catch (err) {
-          lastError = err instanceof Error ? err : new Error('Login failed');
-          // Try next account
-          continue;
+      // Primary demo account
+      const demoAccount = { email: 'demo@pos.com', password: 'demo123456' };
+      
+      try {
+        const result = await signIn(demoAccount.email, demoAccount.password);
+        
+        if (result && result.session) {
+          // Success - redirect to dashboard
+          router.push('/dashboard');
+          return;
         }
-      }
-
-      // If no demo account works, show helpful message
-      if (!loginSuccess) {
-        setError(
-          'Demo account not set. Please register to create an account or ask admin to set up a demo account.'
-        );
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Login failed';
+        
+        // Check if it's an email confirmation error
+        if (errorMessage.includes('Email not confirmed') || errorMessage.includes('not confirmed')) {
+          setError(
+            'Demo account needs email confirmation. Please run AUTO_CONFIRM_DEMO_USER.sql in Supabase SQL Editor.'
+          );
+          setIsDemoLoading(false);
+          return;
+        }
+        
+        // Check if it's invalid credentials
+        if (errorMessage.includes('Invalid login credentials') || errorMessage.includes('Invalid')) {
+          setError(
+            'Demo account not found or password incorrect. Please run COMPLETE_DEMO_SETUP.sql in Supabase SQL Editor to create the demo account.'
+          );
+          setIsDemoLoading(false);
+          return;
+        }
+        
+        // Other errors
+        setError(`Demo login failed: ${errorMessage}. Please check if demo account exists.`);
+        setIsDemoLoading(false);
+        return;
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Demo login failed. Please register to create an account.');
+      setError(err instanceof Error ? err.message : 'Demo login failed. Please check if demo account is set up.');
     } finally {
       setIsDemoLoading(false);
     }
