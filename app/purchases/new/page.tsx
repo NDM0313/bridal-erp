@@ -23,7 +23,9 @@ export default function NewPurchasePage() {
 
   const handleSuccess = () => {
     setModalOpen(false);
+    // Refresh the purchases list by navigating
     router.push('/purchases');
+    router.refresh(); // Force refresh
   };
 
   return (

@@ -8,7 +8,7 @@
  */
 
 import { InvoiceData } from '@/lib/services/invoiceService';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatDate, cn } from '@/lib/utils';
 import { Printer } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 
@@ -130,8 +130,8 @@ export function InvoiceView({ invoice, onPrint }: InvoiceViewProps) {
                     )}
                   </div>
                 </td>
-                <td className="border border-gray-300 px-4 py-2 text-sm text-gray-600">
-                  {item.variation_sku || item.product_sku}
+                <td className="border border-gray-300 px-4 py-2 text-sm text-gray-600 font-mono">
+                  {item.variation_sku ? item.variation_sku : (item.product_sku || '-')}
                 </td>
                 <td className="border border-gray-300 px-4 py-2 text-sm text-right text-gray-700">
                   {item.quantity} {item.unit_name}
@@ -184,6 +184,50 @@ export function InvoiceView({ invoice, onPrint }: InvoiceViewProps) {
                 {formatCurrency(invoice.summary.grand_total)}
               </span>
             </div>
+            {/* Payment Information - Accounting Standard */}
+            {invoice.payments ? (
+              <>
+                <div className="flex justify-between px-4 py-2 border-t-2 border-gray-400">
+                  <span className="text-sm font-semibold text-gray-700">Total Amount:</span>
+                  <span className="text-sm font-semibold text-gray-900">
+                    {formatCurrency(invoice.summary.grand_total)}
+                  </span>
+                </div>
+                <div className="flex justify-between px-4 py-2">
+                  <span className="text-sm font-semibold text-gray-700">Amount Paid:</span>
+                  <span className="text-sm font-semibold text-green-600">
+                    {formatCurrency(invoice.payments.total_paid)}
+                  </span>
+                </div>
+                {invoice.payments.credit_due > 0 && (
+                  <div className="flex justify-between px-4 py-2 bg-red-50">
+                    <span className="text-sm font-semibold text-gray-700">Amount Due:</span>
+                    <span className="text-sm font-semibold text-red-600">
+                      {formatCurrency(invoice.payments.credit_due)}
+                    </span>
+                  </div>
+                )}
+                {invoice.payments.extra_payments > 0 && (
+                  <div className="flex justify-between px-4 py-2 bg-yellow-50">
+                    <span className="text-sm font-medium text-gray-700">Extra Payment:</span>
+                    <span className="text-sm font-medium text-yellow-600">
+                      {formatCurrency(invoice.payments.extra_payments)}
+                    </span>
+                  </div>
+                )}
+              </>
+            ) : (
+              // If no payment data, show based on payment_status
+              <div className="flex justify-between px-4 py-2 border-t-2 border-gray-400">
+                <span className="text-sm font-semibold text-gray-700">Payment Status:</span>
+                <span className={cn(
+                  "text-sm font-semibold",
+                  invoice.transaction.status === 'final' ? "text-green-600" : "text-yellow-600"
+                )}>
+                  {invoice.transaction.status === 'final' ? 'Paid' : 'Pending'}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </div>

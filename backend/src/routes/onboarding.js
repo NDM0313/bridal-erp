@@ -166,6 +166,15 @@ router.post(
         })
         .select()
         .single();
+
+      // Create default business resources (accounts and walk-in customer)
+      try {
+        const { setupDefaultBusinessResources } = await import('../services/businessSetupService.js');
+        await setupDefaultBusinessResources(business.id, req.user.id);
+      } catch (setupError) {
+        console.error('Failed to setup default business resources:', setupError);
+        // Don't fail onboarding - these can be created manually
+      }
       
       res.status(201).json({
         success: true,

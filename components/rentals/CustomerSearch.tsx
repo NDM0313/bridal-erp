@@ -87,7 +87,7 @@ export const CustomerSearch = ({ onSelect, selectedContact }: CustomerSearchProp
 
   return (
     <>
-      <div className="relative">
+      <div className="relative w-full">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={14} />
         <Input
           value={searchTerm}
@@ -105,13 +105,12 @@ export const CustomerSearch = ({ onSelect, selectedContact }: CustomerSearchProp
         >
           <Plus size={14} />
         </Button>
-      </div>
 
-      {/* Dropdown */}
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute z-50 w-full mt-1 bg-gray-900 border border-gray-800 rounded-lg shadow-xl max-h-96 overflow-auto">
+        {/* Dropdown */}
+        {open && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+            <div className="absolute z-50 left-0 right-0 mt-1 bg-gray-900 border border-gray-800 rounded-lg shadow-xl max-h-96 overflow-auto">
             {loading ? (
               <div className="p-4 text-center text-gray-400 text-sm">Loading customers...</div>
             ) : filteredContacts.length === 0 ? (
@@ -154,9 +153,10 @@ export const CustomerSearch = ({ onSelect, selectedContact }: CustomerSearchProp
                 ))}
               </div>
             )}
-          </div>
-        </>
-      )}
+            </div>
+          </>
+        )}
+      </div>
 
       <QuickAddContactModal
         isOpen={isQuickAddOpen}

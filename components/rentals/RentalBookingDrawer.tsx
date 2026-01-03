@@ -20,11 +20,32 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { RentalProductSearch, SearchProduct } from './RentalProductSearch';
 import { CustomerSearch, Contact } from './CustomerSearch';
+import { useRouter } from 'next/navigation';
+import { supabase } from '@/utils/supabase/client';
+
+// Generate rental invoice number
+async function generateRentalInvoiceNumber(businessId: number): Promise<string> {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+
+  // Get count of rental bookings this month
+  const { count } = await supabase
+    .from('rental_bookings')
+    .select('*', { count: 'exact', head: true })
+    .eq('business_id', businessId)
+    .gte('created_at', `${year}-${month}-01`)
+    .lt('created_at', `${year}-${String(parseInt(month) + 1).padStart(2, '0')}-01`);
+
+  const sequence = String((count || 0) + 1).padStart(4, '0');
+  return `RENT-${year}${month}-${sequence}`;
+}
 
 // Types
 interface RentalBookingDrawerProps {
   isOpen: boolean;
   onClose: () => void;
+  booking?: RentalBooking | null; // For edit mode
 }
 
 interface SecurityDetails {
@@ -34,49 +55,164 @@ interface SecurityDetails {
   reference?: string;
 }
 
-export const RentalBookingDrawer = ({ isOpen, onClose }: RentalBookingDrawerProps) => {
+interface PaymentDetails {
+  advanceAmount: number; // 50% of rental
+  dueAmount: number; // Remaining 50%
+  securityAmount: number; // Security deposit (calculated)
+}
+
+export const RentalBookingDrawer = ({ isOpen, onClose, booking: editBooking }: RentalBookingDrawerProps) => {
+  const router = useRouter();
+  const isEditMode = !!editBooking;
+  
   // Date State
-  const [bookingDate, setBookingDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [pickupDate, setPickupDate] = useState<Date | undefined>(new Date());
-  const [returnDate, setReturnDate] = useState<Date | undefined>(addDays(new Date(), 3));
+  const [bookingDate, setBookingDate] = useState<string>(
+    editBooking?.booking_date 
+      ? new Date(editBooking.booking_date).toISOString().split('T')[0]
+      : new Date().toISOString().split('T')[0]
+  );
+  const [pickupDate, setPickupDate] = useState<Date | undefined>(
+    editBooking?.pickup_date ? new Date(editBooking.pickup_date) : new Date()
+  );
+  const [returnDate, setReturnDate] = useState<Date | undefined>(
+    editBooking?.return_date ? new Date(editBooking.return_date) : addDays(new Date(), 3)
+  );
 
   // Customer State
-  const [selectedCustomer, setSelectedCustomer] = useState<Contact | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<Contact | null>(
+    editBooking?.contact ? {
+      id: editBooking.contact.id,
+      name: editBooking.contact.name,
+      mobile: editBooking.contact.mobile,
+      email: editBooking.contact.email,
+    } : null
+  );
 
   // Product State
-  const [selectedProduct, setSelectedProduct] = useState<SearchProduct | null>(null);
-  const [rentalAmount, setRentalAmount] = useState<string>('');
+  const [selectedProduct, setSelectedProduct] = useState<SearchProduct | null>(
+    editBooking?.product ? {
+      id: editBooking.product.id,
+      name: editBooking.product.name,
+      sku: editBooking.product.sku || '',
+      image: editBooking.product.image || '',
+      rentPrice: editBooking.rental_amount,
+    } : null
+  );
+  const [rentalAmount, setRentalAmount] = useState<string>(
+    editBooking?.rental_amount?.toString() || ''
+  );
+  const [advanceAmount, setAdvanceAmount] = useState<string>('');
 
   // Security State
   const [securityDetails, setSecurityDetails] = useState<SecurityDetails>({
-    type: 'cash',
-    amount: 0,
+    type: (editBooking?.security_type as any) || 'id_card',
+    amount: editBooking?.security_deposit_amount || 0,
+    docUrl: editBooking?.security_doc_url || undefined,
   });
+
+  // Notes State
+  const [notes, setNotes] = useState<string>(editBooking?.notes || '');
+
+  // Payment calculations
+  const rentalAmountNum = parseFloat(rentalAmount) || 0;
+  const advanceAmountNum = parseFloat(advanceAmount) || 0;
+  const dueAmount = Math.max(0, rentalAmountNum - advanceAmountNum); // Remaining after advance
+  const securityAmount = Math.round(rentalAmountNum * 0.6); // 60% of rental as security (adjustable)
 
   // Conflict & Loading State
   const [isCheckingConflict, setIsCheckingConflict] = useState(false);
   const [conflictError, setConflictError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [notes, setNotes] = useState<string>('');
 
-  // Auto-fill rental amount and security deposit when product is selected
+  // Load booking data when editBooking changes (for edit mode)
   useEffect(() => {
-    if (selectedProduct) {
-      if (selectedProduct.rentPrice && selectedProduct.rentPrice > 0) {
-        setRentalAmount(selectedProduct.rentPrice.toString());
-      } else {
-        setRentalAmount('');
+    if (editBooking && isOpen) {
+      // Set dates
+      if (editBooking.booking_date) {
+        setBookingDate(new Date(editBooking.booking_date).toISOString().split('T')[0]);
+      }
+      if (editBooking.pickup_date) {
+        setPickupDate(new Date(editBooking.pickup_date));
+      }
+      if (editBooking.return_date) {
+        setReturnDate(new Date(editBooking.return_date));
       }
 
-      const securityDeposit = selectedProduct.securityDeposit;
-      if (securityDeposit && securityDeposit > 0) {
+      // Set customer
+      if (editBooking.contact) {
+        setSelectedCustomer({
+          id: editBooking.contact.id,
+          name: editBooking.contact.name,
+          mobile: editBooking.contact.mobile,
+          email: editBooking.contact.email,
+        });
+      }
+
+      // Set product
+      if (editBooking.product) {
+        setSelectedProduct({
+          id: editBooking.product.id,
+          name: editBooking.product.name,
+          sku: editBooking.product.sku || '',
+          image: editBooking.product.image || '',
+          rentPrice: editBooking.rental_amount,
+        });
+      }
+
+      // Set amounts
+      if (editBooking.rental_amount) {
+        setRentalAmount(editBooking.rental_amount.toString());
+        // Calculate advance amount (50% of rental, or use existing if we have payment info)
+        const calculatedAdvance = Math.round(editBooking.rental_amount * 0.5);
+        setAdvanceAmount(calculatedAdvance.toString());
+      }
+
+      // Set security details
+      setSecurityDetails({
+        type: (editBooking.security_type as any) || 'id_card',
+        amount: editBooking.security_deposit_amount || 0,
+        docUrl: editBooking.security_doc_url || undefined,
+      });
+
+      // Set notes
+      setNotes(editBooking.notes || '');
+    } else if (!editBooking && isOpen) {
+      // Reset form for new booking
+      setBookingDate(new Date().toISOString().split('T')[0]);
+      setPickupDate(new Date());
+      setReturnDate(addDays(new Date(), 3));
+      setSelectedCustomer(null);
+      setSelectedProduct(null);
+      setRentalAmount('');
+      setAdvanceAmount('');
+      setSecurityDetails({ type: 'id_card', amount: 0 });
+      setNotes('');
+    }
+  }, [editBooking, isOpen]);
+
+  // Auto-fill rental amount and security deposit when product is selected (only for new bookings)
+  useEffect(() => {
+    if (selectedProduct && !isEditMode) {
+      if (selectedProduct.rentPrice && selectedProduct.rentPrice > 0) {
+        setRentalAmount(selectedProduct.rentPrice.toString());
+        // Auto-calculate advance as 50% of rental (editable)
+        const calculatedAdvance = Math.round(selectedProduct.rentPrice * 0.5);
+        setAdvanceAmount(calculatedAdvance.toString());
+      } else {
+        setRentalAmount('');
+        setAdvanceAmount('');
+      }
+
+      // Auto-calculate security based on rental amount
+      const calculatedSecurity = Math.round((selectedProduct.rentPrice || 0) * 0.6);
+      if (calculatedSecurity > 0) {
         setSecurityDetails((prev) => ({
           ...prev,
-          amount: securityDeposit as number,
+          amount: calculatedSecurity,
         }));
       }
     }
-  }, [selectedProduct]);
+  }, [selectedProduct, isEditMode]);
 
   // Date Conflict Detection
   useEffect(() => {
@@ -91,11 +227,45 @@ export const RentalBookingDrawer = ({ isOpen, onClose }: RentalBookingDrawerProp
 
       try {
         const productId = typeof selectedProduct.id === 'number' ? selectedProduct.id : parseInt(selectedProduct.id.toString());
-        const response = await apiClient.get<ApiResponse<RentalConflict[]>>(
-          `/rentals/check-conflicts?productId=${productId}&pickupDate=${pickupDate.toISOString()}&returnDate=${returnDate.toISOString()}`
-        );
+        const pickupDateStr = pickupDate.toISOString();
+        const returnDateStr = returnDate.toISOString();
 
-        if (response.data?.data && response.data.data.length > 0) {
+        // Check for date conflicts using direct Supabase query
+        // Find bookings where:
+        // 1. Same product
+        // 2. Status is 'reserved' or 'out' (active bookings)
+        // 3. Date ranges overlap: (pickup_date <= new_return_date AND return_date >= new_pickup_date)
+        
+        // Fetch all active bookings for this product, then filter for overlaps in JavaScript
+        const { data: allBookings, error: conflictError } = await supabase
+          .from('rental_bookings')
+          .select('id, pickup_date, return_date, status')
+          .eq('product_id', productId)
+          .in('status', ['reserved', 'out']);
+
+        if (conflictError) {
+          console.error('Conflict check query error:', conflictError);
+          // Don't show error to user for conflict check failures
+          return;
+        }
+
+        // Filter for actual overlaps (exclude current booking if editing)
+        const actualConflicts = (allBookings || []).filter((booking) => {
+          // Skip the current booking if in edit mode
+          if (isEditMode && editBooking && booking.id === editBooking.id) {
+            return false;
+          }
+          
+          const bookingPickup = new Date(booking.pickup_date);
+          const bookingReturn = new Date(booking.return_date);
+          const newPickup = pickupDate;
+          const newReturn = returnDate;
+
+          // Check if date ranges overlap: (newPickup <= bookingReturn && newReturn >= bookingPickup)
+          return (newPickup <= bookingReturn && newReturn >= bookingPickup);
+        });
+
+        if (actualConflicts.length > 0) {
           setConflictError('⚠️ This product is already booked for these dates.');
         } else {
           setConflictError(null);
@@ -111,7 +281,7 @@ export const RentalBookingDrawer = ({ isOpen, onClose }: RentalBookingDrawerProp
     // Debounce the check
     const timeoutId = setTimeout(checkAvailability, 500);
     return () => clearTimeout(timeoutId);
-  }, [selectedProduct, pickupDate, returnDate]);
+  }, [selectedProduct, pickupDate, returnDate, isEditMode, editBooking]);
 
   // Handle Booking Submission
   const handleBookingSubmit = async () => {
@@ -128,49 +298,122 @@ export const RentalBookingDrawer = ({ isOpen, onClose }: RentalBookingDrawerProp
     setIsSubmitting(true);
 
     try {
+      // Get current user and business
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error('Not authenticated');
+      }
+
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('business_id')
+        .eq('user_id', session.user.id)
+        .single();
+
+      if (!profile?.business_id) {
+        throw new Error('Business not found');
+      }
+
       const productId = typeof selectedProduct.id === 'number' ? selectedProduct.id : parseInt(selectedProduct.id.toString());
       
-      const response = await apiClient.post<ApiResponse<RentalBooking>>('/rentals', {
-        contactId: selectedCustomer.id,
-        productId: productId,
-        pickupDate: pickupDate.toISOString(),
-        returnDate: returnDate.toISOString(),
-        rentalAmount: parseFloat(rentalAmount) || 0,
-        securityDepositAmount: securityDetails.amount || 0,
-        securityType: securityDetails.type,
-        securityDocUrl: securityDetails.docUrl,
-        notes: notes || undefined,
+      // Check for date conflicts before creating
+      const pickupDateStr = pickupDate.toISOString();
+      const returnDateStr = returnDate.toISOString();
+      
+      const { data: existingConflicts } = await supabase
+        .from('rental_bookings')
+        .select('id, pickup_date, return_date')
+        .eq('product_id', productId)
+        .in('status', ['reserved', 'out']);
+
+      const hasConflict = (existingConflicts || []).some((booking) => {
+        // Skip the current booking if in edit mode
+        if (isEditMode && editBooking && booking.id === editBooking.id) {
+          return false;
+        }
+        
+        const bookingPickup = new Date(booking.pickup_date);
+        const bookingReturn = new Date(booking.return_date);
+        return (pickupDate <= bookingReturn && returnDate >= bookingPickup);
       });
 
-      if (response.data?.success) {
+      if (hasConflict) {
+        toast.error('Date conflict detected. Please choose different dates.');
+        setConflictError('⚠️ This product is already booked for these dates.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      if (isEditMode && editBooking) {
+        // Update existing booking
+        const { data: updatedBooking, error: updateError } = await supabase
+          .from('rental_bookings')
+          .update({
+            contact_id: selectedCustomer.id,
+            product_id: productId,
+            pickup_date: pickupDateStr,
+            return_date: returnDateStr,
+            rental_amount: parseFloat(rentalAmount) || 0,
+            security_deposit_amount: securityDetails.amount || 0,
+            security_type: securityDetails.type,
+            security_doc_url: securityDetails.docUrl || null,
+            notes: notes || null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', editBooking.id)
+          .eq('business_id', profile.business_id)
+          .select()
+          .single();
+
+        if (updateError) {
+          throw new Error(updateError.message || 'Failed to update booking');
+        }
+
+        toast.success('Booking updated successfully!');
+      } else {
+        // Generate invoice number for new booking
+        const invoiceNumber = await generateRentalInvoiceNumber(profile.business_id);
+
+        // Create booking directly in Supabase
+        const { data: newBooking, error: bookingError } = await supabase
+          .from('rental_bookings')
+          .insert({
+            business_id: profile.business_id,
+            contact_id: selectedCustomer.id,
+            product_id: productId,
+            invoice_number: invoiceNumber,
+            pickup_date: pickupDateStr,
+            return_date: returnDateStr,
+            rental_amount: parseFloat(rentalAmount) || 0,
+            security_deposit_amount: securityDetails.amount || 0,
+            security_type: securityDetails.type,
+            security_doc_url: securityDetails.docUrl || null,
+            notes: notes || null,
+            status: 'reserved',
+            created_by: session.user.id,
+          })
+          .select()
+          .single();
+
+        if (bookingError) {
+          throw new Error(bookingError.message || 'Failed to create booking');
+        }
+
         toast.success('Booking created successfully!');
-        // Reset form
+        // Reset form only if not in edit mode
         setSelectedProduct(null);
         setSelectedCustomer(null);
         setRentalAmount('');
-        setSecurityDetails({ type: 'cash', amount: 0 });
+        setSecurityDetails({ type: 'id_card', amount: 0 });
         setNotes('');
         setPickupDate(new Date());
         setReturnDate(addDays(new Date(), 3));
-        onClose();
-      } else {
-        throw new Error(response.data?.error?.message || 'Failed to create booking');
       }
+      
+      onClose();
     } catch (error) {
-      const errorMessage = getErrorMessage(error);
-      
-      // Check for conflict error (status 409)
-      const isConflict = error && typeof error === 'object' && 'response' in error 
-        && typeof (error as { response?: { status?: number } }).response?.status === 'number'
-        && (error as { response: { status: number } }).response.status === 409;
-      
-      if (isConflict) {
-        // Date conflict
-        toast.error('Date conflict detected. Please choose different dates.');
-        setConflictError('⚠️ This product is already booked for these dates.');
-      } else {
-        toast.error(errorMessage || 'Failed to create booking. Please try again.');
-      }
+      const errorMessage = error instanceof Error ? error.message : 'Failed to create booking. Please try again.';
+      toast.error(errorMessage);
     } finally {
       setIsSubmitting(false);
     }
@@ -191,7 +434,9 @@ export const RentalBookingDrawer = ({ isOpen, onClose }: RentalBookingDrawerProp
               <ShoppingBag size={20} />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-white">New Rental Booking</h2>
+              <h2 className="text-xl font-bold text-white">
+                {isEditMode ? 'Edit Rental Booking' : 'New Rental Booking'}
+              </h2>
               <p className="text-xs text-gray-400">Manage rental bookings, security & dates</p>
             </div>
           </div>
@@ -225,9 +470,9 @@ export const RentalBookingDrawer = ({ isOpen, onClose }: RentalBookingDrawerProp
             </div>
 
             {/* Rental Timeline */}
-            <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-6 relative overflow-hidden">
-              <div className="absolute top-1/2 left-4 right-10 border-t-2 border-dashed border-gray-800 -z-0"></div>
-              <ArrowRight className="absolute top-1/2 right-4 -translate-y-1/2 text-gray-800 -z-0" size={16} />
+            <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-6 relative overflow-visible z-10">
+              <div className="absolute top-1/2 left-4 right-10 border-t-2 border-dashed border-gray-800 z-0"></div>
+              <ArrowRight className="absolute top-1/2 right-4 -translate-y-1/2 text-gray-800 z-0" size={16} />
 
               <div className="relative z-10 flex items-end justify-between gap-4">
                 {/* Pickup Date */}
@@ -298,6 +543,10 @@ export const RentalBookingDrawer = ({ isOpen, onClose }: RentalBookingDrawerProp
               <RentalProductSearch
                 onSelect={setSelectedProduct}
                 selectedProduct={selectedProduct}
+                onAddProduct={() => {
+                  // Open products page in new tab instead of navigating away
+                  window.open('/products', '_blank');
+                }}
               />
               {selectedProduct && (
                 <div className="mt-2 p-3 bg-gray-900 border border-gray-800 rounded-lg">
@@ -318,57 +567,101 @@ export const RentalBookingDrawer = ({ isOpen, onClose }: RentalBookingDrawerProp
 
             {/* Rental Amount */}
             <div className="space-y-2 mb-6">
-              <Label className="text-xs text-gray-500 uppercase">Rental Amount</Label>
+              <Label className="text-xs text-gray-500 uppercase">Total Rent</Label>
               <Input
                 type="number"
                 placeholder="0.00"
                 value={rentalAmount}
-                onChange={(e) => setRentalAmount(e.target.value)}
+                onChange={(e) => {
+                  setRentalAmount(e.target.value);
+                  // Auto-update advance to 50% if rental changes (but keep editable)
+                  const newRental = parseFloat(e.target.value) || 0;
+                  if (newRental > 0 && !advanceAmount) {
+                    setAdvanceAmount(Math.round(newRental * 0.5).toString());
+                  }
+                }}
                 className="h-9 bg-gray-900 border-gray-700 text-white"
               />
             </div>
 
-            {/* Security Section */}
+            {/* Payment & Security Section */}
             <div className="bg-gray-900 border border-gray-800 rounded-lg p-5 space-y-4 mb-6">
               <div className="flex items-center justify-between">
-                <h3 className="font-semibold text-white">Security Deposit</h3>
+                <h3 className="font-semibold text-white">Payment & Security</h3>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label className="text-gray-400 text-xs uppercase">Type</Label>
-                  <select
-                    value={securityDetails.type}
-                    onChange={(e) =>
-                      setSecurityDetails({
-                        ...securityDetails,
-                        type: e.target.value as SecurityDetails['type'],
-                      })
+              {/* Advance Payment */}
+              <div className="space-y-2">
+                <Label className="text-gray-400 text-xs uppercase">Advance / Booking Amount</Label>
+                <Input
+                  type="number"
+                  placeholder="0.00"
+                  value={advanceAmount}
+                  onChange={(e) => {
+                    const newAdvance = e.target.value;
+                    setAdvanceAmount(newAdvance);
+                    // Ensure advance doesn't exceed rental amount
+                    const rental = parseFloat(rentalAmount) || 0;
+                    const advance = parseFloat(newAdvance) || 0;
+                    if (advance > rental) {
+                      setAdvanceAmount(rental.toString());
                     }
-                    className="w-full h-9 px-3 bg-gray-800 border border-gray-700 rounded text-white text-sm"
-                  >
-                    <option value="cash">Cash Deposit</option>
-                    <option value="id_card">ID Card</option>
-                    <option value="both">Both</option>
-                    <option value="none">None</option>
-                  </select>
-                </div>
+                  }}
+                  max={rentalAmountNum}
+                  className="h-9 bg-gray-800 border-gray-700 text-white"
+                />
+                <p className="text-xs text-gray-500">Payment at booking time</p>
+              </div>
 
-                <div className="space-y-2">
-                  <Label className="text-gray-400 text-xs uppercase">Amount</Label>
-                  <Input
-                    type="number"
-                    placeholder="0.00"
-                    value={securityDetails.amount || ''}
-                    onChange={(e) =>
-                      setSecurityDetails({
-                        ...securityDetails,
-                        amount: parseFloat(e.target.value) || 0,
-                      })
-                    }
-                    className="h-9 bg-gray-800 border-gray-700 text-white"
-                  />
-                </div>
+              {/* Due Amount */}
+              <div className="space-y-2">
+                <Label className="text-gray-400 text-xs uppercase">Balance Due</Label>
+                <Input
+                  type="number"
+                  value={dueAmount}
+                  readOnly
+                  className="h-9 bg-gray-800 border-gray-700 text-white cursor-not-allowed"
+                />
+                <p className="text-xs text-gray-500">To be paid on delivery date</p>
+              </div>
+
+              {/* Security Deposit */}
+              <div className="space-y-2">
+                <Label className="text-gray-400 text-xs uppercase">Security Deposit</Label>
+                <Input
+                  type="number"
+                  placeholder="0.00"
+                  value={securityDetails.amount || ''}
+                  onChange={(e) =>
+                    setSecurityDetails({
+                      ...securityDetails,
+                      amount: parseFloat(e.target.value) || 0,
+                    })
+                  }
+                  className="h-9 bg-gray-800 border-gray-700 text-white"
+                />
+                <p className="text-xs text-gray-500">Taken when due payment is received on delivery</p>
+              </div>
+
+              {/* Security Type */}
+              <div className="space-y-2">
+                <Label className="text-gray-400 text-xs uppercase">Security Type</Label>
+                <select
+                  value={securityDetails.type}
+                  onChange={(e) =>
+                    setSecurityDetails({
+                      ...securityDetails,
+                      type: e.target.value as SecurityDetails['type'],
+                    })
+                  }
+                  className="w-full h-9 px-3 bg-gray-800 border border-gray-700 rounded text-white text-sm"
+                >
+                  <option value="id_card">ID Card</option>
+                  <option value="cash">Cash Deposit</option>
+                  <option value="both">Both (ID + Cash)</option>
+                  <option value="none">None</option>
+                </select>
+                <p className="text-xs text-gray-500">Document will be returned on product return (if no damage)</p>
               </div>
             </div>
 
@@ -391,25 +684,35 @@ export const RentalBookingDrawer = ({ isOpen, onClose }: RentalBookingDrawerProp
             <div className="space-y-4 flex-1">
               <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                 <div className="flex justify-between items-center mb-2">
-                  <span className="text-gray-400 text-sm">Rental Amount</span>
+                  <span className="text-gray-400 text-sm">Total Rent</span>
                   <span className="text-white font-semibold">
                     {rentalAmount ? `Rs. ${parseFloat(rentalAmount).toLocaleString()}` : 'Rs. 0'}
                   </span>
                 </div>
                 <div className="flex justify-between items-center mb-2">
+                  <span className="text-gray-400 text-sm">Advance / Booking Amount</span>
+                  <span className="text-blue-400 font-semibold">
+                    Rs. {advanceAmountNum.toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-gray-400 text-sm">Balance Due</span>
+                  <span className="text-yellow-400 font-semibold">
+                    Rs. {dueAmount.toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center mb-2">
                   <span className="text-gray-400 text-sm">Security Deposit</span>
-                  <span className="text-white font-semibold">
+                  <span className="text-green-400 font-semibold">
                     Rs. {securityDetails.amount.toLocaleString()}
                   </span>
                 </div>
                 <div className="border-t border-gray-800 mt-3 pt-3">
                   <div className="flex justify-between items-center">
-                    <span className="text-gray-300 font-semibold">Total</span>
+                    <span className="text-gray-300 font-semibold">Total (Advance + Security)</span>
                     <span className="text-white font-bold text-lg">
                       Rs.{' '}
-                      {(
-                        (parseFloat(rentalAmount) || 0) + securityDetails.amount
-                      ).toLocaleString()}
+                      {(advanceAmountNum + securityDetails.amount).toLocaleString()}
                     </span>
                   </div>
                 </div>

@@ -34,6 +34,18 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
+      // Check if Supabase is configured
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      
+      if (!supabaseUrl || !supabaseKey) {
+        setError(
+          'Supabase is not configured. Please check your .env.local file and ensure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set.'
+        );
+        setIsLoading(false);
+        return;
+      }
+
       const result = await signIn(email, password);
       
       // Safely check if sign in was successful
@@ -94,11 +106,23 @@ export default function LoginPage() {
 
       // Success - redirect to dashboard
       router.push('/dashboard');
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Login failed';
+    } catch (err: any) {
+      const errorMessage = err?.message || err?.toString() || 'Login failed';
       
-      // Better error messages
-      if (errorMessage.includes('Invalid login credentials') || errorMessage.includes('Invalid')) {
+      // Check for network errors first
+      if (
+        errorMessage.includes('Failed to fetch') ||
+        errorMessage.includes('NetworkError') ||
+        errorMessage.includes('Network request failed') ||
+        errorMessage.includes('fetch')
+      ) {
+        setError(
+          'Network error: Cannot connect to Supabase. Please check:\n' +
+          '1. Your internet connection\n' +
+          '2. Supabase URL in .env.local is correct\n' +
+          '3. Supabase service is running'
+        );
+      } else if (errorMessage.includes('Invalid login credentials') || errorMessage.includes('Invalid')) {
         setError('Invalid email or password. Please try again.');
       } else if (errorMessage.includes('Email not confirmed') || errorMessage.includes('not confirmed')) {
         setError('Please check your email and confirm your account before logging in.');
@@ -117,6 +141,18 @@ export default function LoginPage() {
     setIsDemoLoading(true);
 
     try {
+      // Check if Supabase is configured
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      
+      if (!supabaseUrl || !supabaseKey) {
+        setError(
+          'Supabase is not configured. Please check your .env.local file and ensure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set.'
+        );
+        setIsDemoLoading(false);
+        return;
+      }
+
       // Primary demo account
       const demoAccount = { email: 'demo@pos.com', password: 'demo123456' };
       
@@ -128,8 +164,26 @@ export default function LoginPage() {
           router.push('/dashboard');
           return;
         }
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : 'Login failed';
+      } catch (err: any) {
+        const errorMessage = err?.message || err?.toString() || 'Login failed';
+        
+        // Check for network errors
+        if (
+          errorMessage.includes('Failed to fetch') ||
+          errorMessage.includes('NetworkError') ||
+          errorMessage.includes('Network request failed') ||
+          errorMessage.includes('fetch')
+        ) {
+          setError(
+            'Network error: Cannot connect to Supabase. Please check:\n' +
+            '1. Your internet connection\n' +
+            '2. Supabase URL in .env.local is correct\n' +
+            '3. Supabase service is running\n' +
+            '4. No firewall blocking the connection'
+          );
+          setIsDemoLoading(false);
+          return;
+        }
         
         // Check if it's an email confirmation error
         if (errorMessage.includes('Email not confirmed') || errorMessage.includes('not confirmed')) {
@@ -154,8 +208,21 @@ export default function LoginPage() {
         setIsDemoLoading(false);
         return;
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Demo login failed. Please check if demo account is set up.');
+    } catch (err: any) {
+      const errorMessage = err?.message || err?.toString() || 'Demo login failed. Please check if demo account is set up.';
+      
+      // Check for network errors in outer catch
+      if (
+        errorMessage.includes('Failed to fetch') ||
+        errorMessage.includes('NetworkError') ||
+        errorMessage.includes('Network request failed')
+      ) {
+        setError(
+          'Network error: Cannot connect to Supabase. Please check your internet connection and Supabase configuration.'
+        );
+      } else {
+        setError(errorMessage);
+      }
     } finally {
       setIsDemoLoading(false);
     }

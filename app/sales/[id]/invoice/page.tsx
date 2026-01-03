@@ -18,21 +18,67 @@ export default function InvoicePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [viewMode, setViewMode] = useState<'invoice' | 'receipt'>('invoice');
+  const [shouldPrint, setShouldPrint] = useState(false);
 
   useEffect(() => {
     if (transactionId) {
       loadInvoice();
     }
+    
+    // Check URL params
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('view') === 'receipt') {
+        setViewMode('receipt');
+      }
+      if (urlParams.get('print') === 'true') {
+        setShouldPrint(true);
+      }
+    }
   }, [transactionId]);
+
+  useEffect(() => {
+    // Auto-print if print=true in URL
+    if (shouldPrint && invoice && !loading) {
+      setTimeout(() => {
+        window.print();
+      }, 500);
+    }
+  }, [invoice, loading, shouldPrint]);
 
   const loadInvoice = async () => {
     try {
       setLoading(true);
       setError('');
-      const data = await generateInvoice(transactionId);
+      
+      // Retry logic: Sometimes transaction needs a moment to be available
+      let retries = 3;
+      let data = null;
+      let lastError = null;
+      
+      while (retries > 0) {
+        try {
+          data = await generateInvoice(transactionId);
+          break;
+        } catch (err) {
+          lastError = err;
+          retries--;
+          if (retries > 0) {
+            // Wait 500ms before retry
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
+      }
+      
+      if (!data) {
+        throw lastError || new Error('Failed to load invoice after retries');
+      }
+      
       setInvoice(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load invoice');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load invoice';
+      setError(errorMessage);
+      console.error('Invoice load error:', err);
     } finally {
       setLoading(false);
     }

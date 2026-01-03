@@ -37,19 +37,19 @@ export function ReceiptView({ invoice, onPrint }: ReceiptViewProps) {
       </div>
 
       {/* Receipt Content - Thermal-friendly layout */}
-      <div className="text-center space-y-2 print:text-black">
+      <div className="text-center space-y-2 text-black">
         {/* Business Header */}
         <div className="border-b border-dashed border-gray-400 pb-2">
-          <h1 className="text-lg font-bold uppercase">{invoice.business.name}</h1>
-          {invoice.location.name && <p className="text-xs">{invoice.location.name}</p>}
-          {invoice.location.address && <p className="text-xs">{invoice.location.address}</p>}
+          <h1 className="text-lg font-bold uppercase text-black">{invoice.business.name}</h1>
+          {invoice.location.name && <p className="text-xs text-black">{invoice.location.name}</p>}
+          {invoice.location.address && <p className="text-xs text-black">{invoice.location.address}</p>}
           {invoice.location.city && invoice.location.state && (
-            <p className="text-xs">
+            <p className="text-xs text-black">
               {invoice.location.city}, {invoice.location.state}
             </p>
           )}
           {invoice.business.tax_number_1 && (
-            <p className="text-xs">
+            <p className="text-xs text-black">
               {invoice.business.tax_label_1 || 'Tax'}: {invoice.business.tax_number_1}
             </p>
           )}
@@ -57,9 +57,9 @@ export function ReceiptView({ invoice, onPrint }: ReceiptViewProps) {
 
         {/* Receipt Info */}
         <div className="border-b border-dashed border-gray-400 pb-2 text-xs">
-          <p>Receipt #: {invoice.transaction.invoice_no}</p>
-          <p>Date: {formatDate(invoice.transaction.transaction_date)}</p>
-          {invoice.contact && <p>Customer: {invoice.contact.name}</p>}
+          <p className="text-black">Receipt #: {invoice.transaction.invoice_no}</p>
+          <p className="text-black">Date: {formatDate(invoice.transaction.transaction_date)}</p>
+          {invoice.contact && <p className="text-black">Customer: {invoice.contact.name}</p>}
         </div>
 
         {/* Items */}
@@ -68,16 +68,16 @@ export function ReceiptView({ invoice, onPrint }: ReceiptViewProps) {
             {invoice.items.map((item, index) => (
               <div key={item.id} className="flex justify-between">
                 <div className="flex-1">
-                  <div className="font-medium">
+                  <div className="font-medium text-black">
                     {item.product_name}
                     {item.variation_name && ` - ${item.variation_name}`}
                   </div>
-                  <div className="text-gray-600">
+                  <div className="text-black">
                     {item.quantity} {item.unit_name} @ {formatCurrency(item.unit_price)}
                   </div>
                 </div>
                 <div className="text-right ml-2">
-                  <div className="font-medium">{formatCurrency(item.line_total)}</div>
+                  <div className="font-medium text-black">{formatCurrency(item.line_total)}</div>
                 </div>
               </div>
             ))}
@@ -86,23 +86,23 @@ export function ReceiptView({ invoice, onPrint }: ReceiptViewProps) {
 
         {/* Totals */}
         <div className="border-b border-dashed border-gray-400 pb-2 text-xs">
-          <div className="flex justify-between">
+          <div className="flex justify-between text-black">
             <span>Subtotal:</span>
             <span>{formatCurrency(invoice.summary.subtotal)}</span>
           </div>
           {invoice.summary.total_discount > 0 && (
-            <div className="flex justify-between">
+            <div className="flex justify-between text-black">
               <span>Discount:</span>
               <span>-{formatCurrency(invoice.summary.total_discount)}</span>
             </div>
           )}
           {invoice.summary.total_tax > 0 && (
-            <div className="flex justify-between">
+            <div className="flex justify-between text-black">
               <span>Tax:</span>
               <span>{formatCurrency(invoice.summary.total_tax)}</span>
             </div>
           )}
-          <div className="flex justify-between font-bold text-base mt-1">
+          <div className="flex justify-between font-bold text-base mt-1 text-black">
             <span>TOTAL:</span>
             <span>{formatCurrency(invoice.summary.grand_total)}</span>
           </div>
@@ -110,14 +110,18 @@ export function ReceiptView({ invoice, onPrint }: ReceiptViewProps) {
 
         {/* Footer */}
         <div className="text-xs text-center space-y-1">
-          <p>Thank you for your purchase!</p>
-          <p className="text-gray-500">This is a computer-generated receipt.</p>
+          <p className="text-black">Thank you for your purchase!</p>
+          <p className="text-black">This is a computer-generated receipt.</p>
         </div>
       </div>
 
       {/* Print Styles */}
       <style jsx global>{`
         @media print {
+          @page {
+            size: 80mm auto;
+            margin: 0;
+          }
           body * {
             visibility: hidden;
           }
@@ -131,9 +135,22 @@ export function ReceiptView({ invoice, onPrint }: ReceiptViewProps) {
             top: 0;
             width: 80mm;
             max-width: 80mm;
+            background: white !important;
+            color: black !important;
+          }
+          #receipt-content * {
+            color: black !important;
+            background: white !important;
           }
           .print\\:hidden {
             display: none !important;
+          }
+        }
+        @media screen {
+          #receipt-content {
+            background: white;
+            color: black;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
           }
         }
       `}</style>

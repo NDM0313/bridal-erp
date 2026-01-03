@@ -36,6 +36,7 @@ import { FinancialAccount, RentalBooking, ProductionOrder } from '@/lib/types/mo
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { ensureDefaultResourcesExist } from '@/lib/services/businessSetupService';
 
 interface DashboardStats {
   totalBalance: number;
@@ -88,30 +89,30 @@ const StatCard = ({ title, value, icon: Icon, color, bgGradient, loading, trend,
     <div
       onClick={onClick}
       className={cn(
-        'relative overflow-hidden p-6 rounded-xl border border-gray-800 bg-gray-900 transition-all duration-300',
+        'relative overflow-hidden p-5 rounded-xl border border-gray-800 bg-gray-900 transition-all duration-300',
         onClick && 'cursor-pointer hover:border-blue-500/50 hover:-translate-y-1 hover:shadow-xl'
       )}
     >
       {/* Background Graphic */}
-      <div className="absolute bottom-0 right-0 p-4 opacity-10">
-        <Icon size={80} className={cn(color)} />
+      <div className="absolute bottom-0 right-0 p-3 opacity-10">
+        <Icon size={64} className={cn(color)} />
       </div>
       
       <div className="relative z-10">
-        <div className="flex items-center justify-between mb-4">
-          <div className={cn('p-3 rounded-xl', color.includes('bg-') ? color : `bg-${color.split('-')[1]}-500/10`, color)}>
-            <Icon size={24} />
+        <div className="flex items-center justify-between mb-3">
+          <div className={cn('p-2.5 rounded-lg', color.includes('bg-') ? color : `bg-${color.split('-')[1]}-500/10`, color)}>
+            <Icon size={20} strokeWidth={2} />
           </div>
           {trend !== undefined && (
-            <div className={cn('flex items-center gap-1 text-xs font-medium', trendColor)}>
-              <TrendIcon size={14} />
+            <div className={cn('flex items-center gap-1 text-xs font-medium px-2 py-1 rounded', isPositiveTrend ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500')}>
+              <TrendIcon size={12} />
               {Math.abs(trend)}%
             </div>
           )}
         </div>
         <div>
-          <h3 className="text-gray-400 text-sm mb-1">{title}</h3>
-          <p className={cn('text-2xl font-bold', color)}>{value}</p>
+          <h3 className="text-gray-400 text-xs mb-1.5">{title}</h3>
+          <p className={cn('text-xl font-bold', color)}>{value}</p>
         </div>
       </div>
     </div>
@@ -167,16 +168,71 @@ export function ModernDashboardHome() {
         throw new Error('Business not found');
       }
 
-      // Parallel fetch all stats
+      // Ensure default resources exist (accounts and walk-in customer)
+      // This runs in background and doesn't block dashboard loading
+      ensureDefaultResourcesExist().catch((err) => {
+        console.error('Failed to ensure default resources:', err);
+        // Don't show error to user - this is a background operation
+      });
+
+      // Parallel fetch all stats - using Supabase directly to avoid API errors
       const [accountsResult, rentalsResult, productionResult, inventoryResult] = await Promise.allSettled([
-        // Fetch financial accounts
-        apiClient.get<ApiResponse<FinancialAccount[]>>('/accounting/accounts'),
-        // Fetch active rentals (reserved or out)
-        apiClient.get<ApiResponse<RentalBooking[]>>('/rentals?per_page=100'),
-        // Fetch active production orders (new, dyeing, stitching)
-        apiClient.get<ApiResponse<ProductionOrder[]>>('/production?per_page=100'),
-        // Fetch low stock items
-        apiClient.get<ApiResponse<any>>('/reports/inventory?low_stock_only=true'),
+        // Fetch financial accounts from Supabase
+        supabase
+          .from('financial_accounts')
+          .select('*')
+          .eq('business_id', profile.business_id)
+          .then(({ data, error }) => {
+            if (error) throw error;
+            return { data: { success: true, data: data || [] } };
+          }),
+        // Fetch active rentals from Supabase
+        supabase
+          .from('rental_bookings')
+          .select('*')
+          .eq('business_id', profile.business_id)
+          .in('status', ['reserved', 'out'])
+          .limit(100)
+          .then(({ data, error }) => {
+            if (error) throw error;
+            return { data: { success: true, data: data || [] } };
+          }),
+        // Fetch active production orders from Supabase
+        supabase
+          .from('production_orders')
+          .select('*')
+          .eq('business_id', profile.business_id)
+          .in('status', ['new', 'dyeing', 'stitching'])
+          .limit(100)
+          .then(({ data, error }) => {
+            if (error) throw error;
+            return { data: { success: true, data: data || [] } };
+          }),
+        // Fetch low stock items from Supabase
+        supabase
+          .from('variation_location_details')
+          .select(`
+            variation_id,
+            qty_available,
+            variations:variation_id (
+              product_id,
+              products:product_id (
+                name,
+                alert_quantity
+              )
+            )
+          `)
+          .eq('location_id', profile.business_id) // Adjust based on your location logic
+          .then(({ data, error }) => {
+            if (error) throw error;
+            // Filter low stock items
+            const lowStock = (data || []).filter((item: any) => {
+              const qty = parseFloat(item.qty_available?.toString() || '0');
+              const alertQty = parseFloat(item.variations?.products?.alert_quantity?.toString() || '0');
+              return qty <= alertQty;
+            });
+            return { data: { success: true, data: lowStock } };
+          }),
       ]);
 
       // Process accounts
@@ -350,12 +406,12 @@ export function ModernDashboardHome() {
   };
 
   return (
-    <div className="space-y-6 p-6 bg-gray-900 min-h-screen">
+    <div className="space-y-5 p-5 bg-gray-900 min-h-screen">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-white">Command Center</h1>
-          <p className="text-gray-400 mt-1">Real-time overview of your business</p>
+          <h1 className="text-2xl font-bold text-white">Command Center</h1>
+          <p className="text-gray-400 mt-1 text-sm">Real-time overview of your business</p>
         </div>
       </div>
 
@@ -363,12 +419,22 @@ export function ModernDashboardHome() {
       {lowStockItems.length > 0 && (
         <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <AlertTriangle className="text-red-500" size={24} />
+            <div className="p-2 bg-red-500/20 rounded-lg text-red-500">
+              <AlertTriangle size={20} strokeWidth={2} />
+            </div>
             <div>
-              <h3 className="text-red-500 font-bold">Low Stock Alert</h3>
-              <p className="text-red-400 text-sm">{lowStockItems.length} items are below minimum stock level</p>
+              <h3 className="text-red-500 font-bold text-sm">Low Stock Alert</h3>
+              <p className="text-red-400 text-xs">{lowStockItems.length} items are below minimum stock level</p>
             </div>
           </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-red-500 hover:text-red-400 text-xs p-0 h-auto"
+            onClick={() => router.push('/products?filter=low_stock')}
+          >
+            View Inventory →
+          </Button>
         </div>
       )}
 
@@ -377,18 +443,18 @@ export function ModernDashboardHome() {
         {/* Production Status Card */}
         <div
           onClick={() => router.push('/dashboard/studio')}
-          className="bg-gray-900 border border-gray-800 rounded-xl p-6 relative overflow-hidden cursor-pointer hover:border-purple-500/50 hover:-translate-y-1 hover:shadow-xl transition-all"
+          className="bg-gray-900 border border-gray-800 rounded-xl p-5 relative overflow-hidden cursor-pointer hover:border-purple-500/50 hover:-translate-y-1 hover:shadow-xl transition-all"
         >
-          <div className="absolute top-0 right-0 p-4 opacity-10">
-            <Scissors size={80} className="text-purple-500" />
+          <div className="absolute top-0 right-0 p-3 opacity-10">
+            <Scissors size={64} className="text-purple-500" strokeWidth={1} />
           </div>
           <div className="relative z-10">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-3 rounded-xl bg-purple-500/10 text-purple-400">
-                <Scissors size={24} />
+            <div className="flex items-center gap-3 mb-3">
+              <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
+                <Scissors size={20} strokeWidth={2} />
               </div>
             </div>
-            <h3 className="text-gray-400 text-sm mb-3">Production Status</h3>
+            <h3 className="text-gray-400 text-xs mb-3 font-medium">Production Status</h3>
             <div className="space-y-2 mb-4">
               <p className="text-sm text-white font-medium flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-purple-500"></span>
@@ -473,10 +539,10 @@ export function ModernDashboardHome() {
         </div>
 
         {/* Critical Stock Widget */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
           <div className="flex items-center gap-2 mb-4">
-            <AlertTriangle className="text-red-500" size={20} />
-            <h3 className="text-lg font-bold text-white">Critical Stock</h3>
+            <AlertTriangle className="text-red-500" size={20} strokeWidth={2} />
+            <h3 className="text-base font-bold text-white">Critical Stock</h3>
           </div>
           {lowStockItems.length === 0 ? (
             <p className="text-gray-500 text-sm">No critical stock items</p>

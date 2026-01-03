@@ -230,7 +230,9 @@ export default function RentalPrintPage() {
               </div>
               <div className="text-right">
                 <h2 className="text-2xl font-bold mb-2">RENTAL INVOICE</h2>
-                <p className="text-gray-600 text-sm">Booking ID: #{booking.id}</p>
+                <p className="text-gray-600 text-sm">
+                  Invoice No: {booking.invoice_number || `#${booking.id}`}
+                </p>
               </div>
             </div>
           </div>

@@ -5,22 +5,23 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
-import { X, Search, Plus, Minus, Trash2, Truck, Calendar, HelpCircle, Box, Pencil } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { X, Search, Plus, Minus, Trash2, Truck, Calendar, HelpCircle, Pencil, FileText, User, CheckCircle2, ArrowDown, DollarSign, Save, Printer, Box } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { Badge } from '@/components/ui/Badge';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/Sheet';
 import { supabase } from '@/utils/supabase/client';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/utils';
 import { format } from 'date-fns';
-import { PackingEntryDialog } from '@/components/sales/PackingEntryDialog';
+import { PackingOverlay } from './PackingOverlay';
 
 interface PackingData {
-  boxes: Array<{ id: string; pieces: Array<{ id: string; meters: number }> }>;
-  loosePieces: Array<{ id: string; meters: number }>;
+  boxes: Array<{ id: string; pieces: Array<{ id: string; meters: number | string }> }>;
+  loosePieces: Array<{ id: string; meters: number | string }>;
   totalBoxes: number;
   totalPieces: number;
   totalMeters: number;
@@ -55,69 +56,146 @@ export function AddPurchaseModal({ isOpen, onClose, onSuccess }: AddPurchaseModa
   const [items, setItems] = useState<PurchaseItem[]>([]);
   const [suppliers, setSuppliers] = useState<Array<{ id: number; name: string }>>([]);
   const [products, setProducts] = useState<Array<{ id: number; name: string; sku: string; stock: number }>>([]);
+  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Card' | 'Bank Transfer'>('Cash');
+  const [paymentType, setPaymentType] = useState<'cash' | 'partial' | 'credit'>('cash'); // Cash, Partial, or Credit
+  const [refNumber, setRefNumber] = useState(`PO-${String(Date.now()).slice(-3)}`);
+  const [supplierInvoiceNo, setSupplierInvoiceNo] = useState(`SI-${String(Date.now()).slice(-3)}`);
+  const [productSearchTerm, setProductSearchTerm] = useState('');
+  const [productQuantity, setProductQuantity] = useState('1');
+  const [productCostPrice, setProductCostPrice] = useState('0');
+  const [selectedProductIndex, setSelectedProductIndex] = useState(-1);
+  const [showProductDropdown, setShowProductDropdown] = useState(false);
+  const [cogsAmount, setCogsAmount] = useState('0');
+  const [cogsNotes, setCogsNotes] = useState('');
+  const [discountPercent, setDiscountPercent] = useState('0');
   const [packingDialogOpen, setPackingDialogOpen] = useState(false);
   const [currentPackingItem, setCurrentPackingItem] = useState<PurchaseItem | null>(null);
 
+  // Optimized: Load data in parallel, non-blocking - modal opens immediately
   useEffect(() => {
     if (isOpen) {
-      loadSuppliers();
-      loadProducts();
+      // Load data in parallel without blocking modal render
+      Promise.all([
+        loadSuppliers().catch(() => {}), // Fail silently, will retry on user interaction
+        loadProducts().catch(() => {}),
+      ]);
     }
   }, [isOpen]);
 
   const loadSuppliers = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) {
+        console.error('Session error:', sessionError);
+        toast.error('Failed to authenticate. Please refresh the page.');
+        return;
+      }
+      if (!session) {
+        console.warn('No active session');
+        toast.error('Please log in to continue.');
+        return;
+      }
 
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
         .select('business_id')
         .eq('user_id', session.user.id)
         .single();
 
-      if (!profile) return;
+      if (profileError) {
+        console.error('Profile error:', profileError);
+        toast.error('Failed to load business profile');
+        return;
+      }
+      if (!profile) {
+        console.warn('No business profile found');
+        return;
+      }
 
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('contacts')
         .select('id, name')
         .eq('business_id', profile.business_id)
         .or('type.eq.supplier,type.eq.both')
         .order('name');
 
+      if (error) {
+        console.error('Suppliers fetch error:', error);
+        const errorMessage = error.message || error.code || 'Network error';
+        toast.error(`Failed to load suppliers: ${errorMessage}. Please check your connection.`);
+        return;
+      }
+
       if (data) {
         setSuppliers(data.map((c) => ({ id: c.id, name: c.name })));
       }
     } catch (err) {
       console.error('Failed to load suppliers:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Network error. Please check your connection.';
+      const isNetworkError = err instanceof TypeError && err.message.includes('fetch');
+      toast.error(
+        isNetworkError 
+          ? 'Network error. Please check your internet connection and try again.'
+          : `Failed to load suppliers: ${errorMessage}`
+      );
     }
   };
 
   const loadProducts = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) {
+        console.error('Session error:', sessionError);
+        toast.error('Failed to authenticate. Please refresh the page.');
+        return;
+      }
+      if (!session) {
+        console.warn('No active session');
+        return;
+      }
 
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
         .select('business_id')
         .eq('user_id', session.user.id)
         .single();
 
-      if (!profile) return;
+      if (profileError) {
+        console.error('Profile error:', profileError);
+        toast.error('Failed to load business profile');
+        return;
+      }
+      if (!profile) {
+        console.warn('No business profile found');
+        return;
+      }
 
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('products')
         .select('id, name, sku')
         .eq('business_id', profile.business_id)
         .order('name')
         .limit(100);
 
+      if (error) {
+        console.error('Products fetch error:', error);
+        const errorMessage = error.message || error.code || 'Network error';
+        toast.error(`Failed to load products: ${errorMessage}. Please check your connection.`);
+        return;
+      }
+
       if (data) {
         setProducts(data.map((p) => ({ id: p.id, name: p.name, sku: p.sku || '', stock: 0 })));
       }
     } catch (err) {
       console.error('Failed to load products:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Network error. Please check your connection.';
+      const isNetworkError = err instanceof TypeError && err.message.includes('fetch');
+      toast.error(
+        isNetworkError 
+          ? 'Network error. Please check your internet connection and try again.'
+          : `Failed to load products: ${errorMessage}`
+      );
     }
   };
 
@@ -149,11 +227,6 @@ export function AddPurchaseModal({ isOpen, onClose, onSuccess }: AddPurchaseModa
     }
     setItems(items.map((item) => {
       if (item.id === itemId) {
-        // If packing data exists, don't allow manual quantity change
-        if (item.packing && item.packing.totalPieces > 0) {
-          toast.info('Quantity is calculated from Box/PC data. Update packing to change quantity.');
-          return item;
-        }
         const subtotal = (item.unit_price * quantity) - item.discount;
         return { ...item, quantity, subtotal };
       }
@@ -190,27 +263,15 @@ export function AddPurchaseModal({ isOpen, onClose, onSuccess }: AddPurchaseModa
     p.sku.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
-  const discount = items.reduce((sum, item) => sum + item.discount, 0);
-  const tax = subtotal * 0.1; // 10% tax
-  const shipping = 0;
-  const grandTotal = subtotal - discount + tax + shipping;
-
-  // Calculate total packing breakdown
-  const packingTotals = items.reduce(
-    (acc, item) => {
-      if (item.packing && item.packing.totalPieces > 0) {
-        acc.totalBoxes += item.packing.totalBoxes;
-        acc.totalPieces += item.packing.totalPieces;
-      }
-      // Total meters should include all item quantities, not just packing meters
-      acc.totalMeters += item.quantity;
-      return acc;
-    },
-    { totalBoxes: 0, totalPieces: 0, totalMeters: 0 }
-  );
+  const itemsSubtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+  const itemDiscount = items.reduce((sum, item) => sum + item.discount, 0);
+  const discountAmount = (itemsSubtotal * parseFloat(discountPercent.toString() || '0')) / 100;
+  const cogs = parseFloat(cogsAmount || '0');
+  const tax = (itemsSubtotal - itemDiscount - discountAmount) * 0.1; // 10% tax on discounted amount
+  const grandTotal = itemsSubtotal - itemDiscount - discountAmount + tax + cogs;
 
   const handleSubmit = async (isFinal: boolean) => {
+    // Validation
     if (!supplier) {
       toast.error('Please select a supplier');
       return;
@@ -239,6 +300,7 @@ export function AddPurchaseModal({ isOpen, onClose, onSuccess }: AddPurchaseModa
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
         toast.error('Please log in to create a purchase');
+        setLoading(false);
         return;
       }
 
@@ -250,6 +312,7 @@ export function AddPurchaseModal({ isOpen, onClose, onSuccess }: AddPurchaseModa
 
       if (!profile) {
         toast.error('Business profile not found');
+        setLoading(false);
         return;
       }
 
@@ -263,6 +326,7 @@ export function AddPurchaseModal({ isOpen, onClose, onSuccess }: AddPurchaseModa
 
       if (!location) {
         toast.error('No business location found');
+        setLoading(false);
         return;
       }
 
@@ -274,7 +338,10 @@ export function AddPurchaseModal({ isOpen, onClose, onSuccess }: AddPurchaseModa
         .in('product_id', productIds);
 
       if (!variationsData || variationsData.length === 0) {
+        console.error('Variations data:', variationsData);
+        console.error('Product IDs:', productIds);
         toast.error('Product variations not found');
+        setLoading(false);
         return;
       }
 
@@ -293,8 +360,18 @@ export function AddPurchaseModal({ isOpen, onClose, onSuccess }: AddPurchaseModa
         .limit(1)
         .single();
 
+      // Determine payment status based on payment type and final status
+      let paymentStatus: 'paid' | 'due' | 'partial' = 'due';
+      if (isFinal) {
+        paymentStatus = paymentType === 'cash' ? 'paid' : 'due';
+      }
+
       // Create transaction
-      const refNo = `PUR-${Date.now()}`;
+      const refNo = refNumber || `PUR-${Date.now()}`;
+      
+      // Convert date to ISO string format
+      const transactionDate = date ? new Date(date).toISOString() : new Date().toISOString();
+      
       const { data: transaction, error: transactionError } = await supabase
         .from('transactions')
         .insert({
@@ -302,26 +379,56 @@ export function AddPurchaseModal({ isOpen, onClose, onSuccess }: AddPurchaseModa
           location_id: location.id,
           type: 'purchase',
           status: isFinal ? 'final' : 'draft',
-          payment_status: isFinal ? 'paid' : 'due',
+          payment_status: paymentStatus,
           contact_id: supplier === 'walkin' ? null : parseInt(supplier),
           ref_no: refNo,
-          transaction_date: date,
-          total_before_tax: subtotal,
-          tax_amount: tax,
-          discount_amount: discount,
-          shipping_charges: shipping,
-          final_total: grandTotal,
-          additional_notes: notes,
+          transaction_date: transactionDate,
+          total_before_tax: parseFloat(itemsSubtotal.toString()),
+          tax_amount: parseFloat(tax.toString()),
+          discount_amount: parseFloat((itemDiscount + discountAmount).toString()),
+          shipping_charges: parseFloat(cogs.toString()), // COGS stored in shipping_charges field
+          final_total: parseFloat(grandTotal.toString()),
+          additional_notes: notes || null,
           created_by: session.user.id,
         })
         .select()
         .single();
 
       if (transactionError) {
-        throw new Error(`Failed to create transaction: ${transactionError.message}`);
+        console.error('Transaction creation error:', transactionError);
+        console.error('Full error object:', JSON.stringify(transactionError, null, 2));
+        throw new Error(`Failed to create transaction: ${transactionError.message || JSON.stringify(transactionError)}`);
       }
 
+      if (!transaction) {
+        console.error('Transaction is null after insert');
+        throw new Error('Transaction was not created - no data returned');
+      }
+
+      console.log('Transaction created successfully:', transaction);
+
       transactionId = transaction.id;
+
+      // Create account transaction for the purchase (only if final, cash payment, and paid)
+      // Credit purchases don't create accounting entries immediately - they create payable
+      if (isFinal && paymentType === 'cash' && transaction.payment_status === 'paid') {
+        try {
+          const { createAccountTransactionForPurchase } = await import('@/lib/services/accountingService');
+          await createAccountTransactionForPurchase(
+            profile.business_id,
+            transaction.id,
+            grandTotal,
+            paymentMethod || 'Cash', // Use selected payment method
+            session.user.id,
+            `Purchase - Ref ${refNo}`
+          );
+        } catch (accountingError) {
+          console.error('Failed to create accounting entry:', accountingError);
+          // Don't fail the purchase - just log the error
+        }
+      }
+      // Note: Credit purchases (payment_status = 'due') will be tracked as accounts payable
+      // and can be paid later through payment management
 
       // Create purchase lines and collect for stock update
       const purchaseLines = [];
@@ -336,30 +443,26 @@ export function AddPurchaseModal({ isOpen, onClose, onSuccess }: AddPurchaseModa
         }
 
         // Calculate quantity in pieces for stock update
-        // If packing data exists, use totalMeters (which is already in meters)
-        // For stock, we need to convert meters to pieces if needed
-        // For now, assuming quantity is already in base unit (pieces) or meters
-        // If it's meters, we'll need unit conversion - for simplicity, treating quantity as pieces
         let quantityInPieces = item.quantity;
-        
-        // If packing data exists, quantity is in meters, need to convert
-        // For fabric: 1 meter = 1 piece (simplified, adjust based on your business logic)
-        // You may need to add unit conversion logic here based on your product units
-        if (item.packing && item.packing.totalMeters > 0) {
-          // For fabric products, meters might be the base unit
-          // Adjust this conversion based on your business logic
-          quantityInPieces = item.packing.totalMeters;
-        }
+
+        // Calculate line totals
+        const lineSubtotal = (item.unit_price * item.quantity) - item.discount;
+        const lineTax = lineSubtotal * 0.1; // 10% tax
+        const lineTotal = lineSubtotal + lineTax;
+        const purchasePriceIncTax = item.unit_price + (item.unit_price * 0.1);
 
         const lineData = {
           transaction_id: transaction.id,
           variation_id: variation.id,
           product_id: item.product_id,
-          quantity: item.quantity,
+          quantity: parseFloat(item.quantity.toString()),
           unit_id: product?.unit_id || 1,
-          unit_price: item.unit_price,
-          discount_amount: item.discount,
-          subtotal: item.subtotal,
+          purchase_price: parseFloat(item.unit_price.toString()),
+          purchase_price_inc_tax: parseFloat(purchasePriceIncTax.toString()),
+          item_tax: parseFloat(lineTax.toString()),
+          line_total: parseFloat(lineTotal.toString()),
+          line_discount_type: item.discount > 0 ? 'fixed' : null,
+          line_discount_amount: parseFloat(item.discount.toString()),
         };
 
         purchaseLines.push(lineData);
@@ -375,59 +478,84 @@ export function AddPurchaseModal({ isOpen, onClose, onSuccess }: AddPurchaseModa
       }
 
       // Insert purchase lines
+      console.log('Inserting purchase lines:', purchaseLines);
       const { data: insertedLines, error: linesError } = await supabase
         .from('purchase_lines')
         .insert(purchaseLines)
         .select();
 
       if (linesError) {
+        console.error('Purchase lines error:', linesError);
+        console.error('Purchase lines data:', purchaseLines);
         throw new Error(`Failed to create purchase lines: ${linesError.message}`);
       }
 
-      // Update stock if finalizing
+      if (!insertedLines || insertedLines.length === 0) {
+        throw new Error('No purchase lines were created');
+      }
+
+      console.log('Purchase lines created successfully:', insertedLines);
+
+      // Update stock if finalizing (regardless of payment type - stock comes in on purchase)
       if (isFinal && stockUpdates.length > 0) {
         for (const stockUpdate of stockUpdates) {
-          // Get current stock
-          const { data: currentStock } = await supabase
-            .from('variation_location_details')
-            .select('qty_available, product_id, product_variation_id')
-            .eq('variation_id', stockUpdate.variationId)
-            .eq('location_id', stockUpdate.locationId)
-            .single();
-
-          const newStock = (parseFloat(currentStock?.qty_available?.toString() || '0')) + stockUpdate.quantityInPieces;
-
-          if (currentStock) {
-            // Update existing stock
-            const { error: stockError } = await supabase
+          try {
+            // Get current stock
+            const { data: currentStock, error: stockFetchError } = await supabase
               .from('variation_location_details')
-              .update({ qty_available: newStock.toString() })
+              .select('qty_available, product_id, product_variation_id')
               .eq('variation_id', stockUpdate.variationId)
-              .eq('location_id', stockUpdate.locationId);
+              .eq('location_id', stockUpdate.locationId)
+              .maybeSingle(); // Use maybeSingle() instead of single() to handle null case
 
-            if (stockError) {
-              throw new Error(`Failed to update stock: ${stockError.message}`);
-            }
-          } else {
-            // Create new stock record
-            const variation = variationsData.find(v => v.id === stockUpdate.variationId);
-            if (!variation) {
-              throw new Error('Variation not found for stock update');
+            if (stockFetchError && stockFetchError.code !== 'PGRST116') { // PGRST116 = no rows returned
+              console.warn('Stock fetch error (non-critical):', stockFetchError);
             }
 
-            const { error: stockError } = await supabase
-              .from('variation_location_details')
-              .insert({
-                variation_id: stockUpdate.variationId,
-                product_id: variation.product_id,
-                product_variation_id: variation.product_variation_id || null,
-                location_id: stockUpdate.locationId,
-                qty_available: newStock.toString(),
-              });
+            const currentQty = parseFloat(currentStock?.qty_available?.toString() || '0');
+            const newStock = currentQty + stockUpdate.quantityInPieces;
 
-            if (stockError) {
-              throw new Error(`Failed to create stock record: ${stockError.message}`);
+            if (currentStock) {
+              // Update existing stock
+              const { error: stockError } = await supabase
+                .from('variation_location_details')
+                .update({ qty_available: newStock.toString() })
+                .eq('variation_id', stockUpdate.variationId)
+                .eq('location_id', stockUpdate.locationId);
+
+              if (stockError) {
+                console.error('Failed to update stock:', stockError);
+                // Don't fail the purchase - just log the error
+                toast.warning(`Warning: Stock update failed for variation ${stockUpdate.variationId}`);
+              }
+            } else {
+              // Create new stock record
+              const variation = variationsData.find(v => v.id === stockUpdate.variationId);
+              if (!variation) {
+                console.error('Variation not found for stock update:', stockUpdate.variationId);
+                continue; // Skip this stock update
+              }
+
+              const { error: stockError } = await supabase
+                .from('variation_location_details')
+                .insert({
+                  variation_id: stockUpdate.variationId,
+                  product_id: variation.product_id,
+                  product_variation_id: variation.product_variation_id || null,
+                  location_id: stockUpdate.locationId,
+                  qty_available: newStock.toString(),
+                });
+
+              if (stockError) {
+                console.error('Failed to create stock record:', stockError);
+                // Don't fail the purchase - just log the error
+                toast.warning(`Warning: Stock creation failed for variation ${stockUpdate.variationId}`);
+              }
             }
+          } catch (stockErr) {
+            console.error('Error updating stock:', stockErr);
+            // Don't fail the purchase - just log the error
+            toast.warning('Warning: Some stock updates may have failed');
           }
         }
       }
@@ -436,407 +564,719 @@ export function AddPurchaseModal({ isOpen, onClose, onSuccess }: AddPurchaseModa
       // Note: Currently packing structure is for sales, but can be extended for purchases
       // For now, we'll skip packing data for purchases unless purchase_item_packing table exists
 
+      console.log('Purchase saved successfully!', { transactionId, isFinal });
       toast.success(`Purchase ${isFinal ? 'finalized' : 'saved as draft'} successfully!`);
-      if (onSuccess) onSuccess();
+      
+      // Small delay to ensure data is saved before closing
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      if (onSuccess) {
+        onSuccess();
+      }
       onClose();
     } catch (err) {
+      console.error('Purchase submission error:', err);
+      
       // Rollback transaction if created
       if (transactionId) {
-        await supabase.from('transactions').delete().eq('id', transactionId);
+        try {
+          await supabase.from('transactions').delete().eq('id', transactionId);
+        } catch (rollbackErr) {
+          console.error('Failed to rollback transaction:', rollbackErr);
+        }
       }
-      toast.error(err instanceof Error ? err.message : 'Failed to create purchase');
+      
+      // Detect network errors
+      const isNetworkError = 
+        err instanceof TypeError && err.message.includes('fetch') ||
+        err instanceof Error && (err.message.includes('Failed to fetch') || err.message.includes('NetworkError'));
+      
+      if (isNetworkError) {
+        toast.error('Network error. Please check your internet connection and try again.');
+      } else {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to create purchase';
+        toast.error(`Error: ${errorMessage}`);
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  const filteredProductsForSearch = products.filter((product) =>
+    product.name.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
+    product.sku.toLowerCase().includes(productSearchTerm.toLowerCase())
+  );
+
+  const handleAddProductFromSearch = (selectedProduct?: typeof products[0]) => {
+    const productToAdd = selectedProduct || (selectedProductIndex >= 0 ? filteredProductsForSearch[selectedProductIndex] : filteredProductsForSearch[0]);
+    
+    if (!productToAdd) {
+      if (!productSearchTerm) {
+        toast.error('Please search for a product first');
+      } else {
+        toast.error('Product not found');
+      }
+      return;
+    }
+
+    const newItem: PurchaseItem = {
+      id: `item-${Date.now()}`,
+      product_id: productToAdd.id,
+      product_name: productToAdd.name,
+      sku: productToAdd.sku,
+      stock: productToAdd.stock,
+      quantity: parseFloat(productQuantity) || 1,
+      unit_price: parseFloat(productCostPrice) || 0,
+      discount: 0,
+      subtotal: (parseFloat(productCostPrice) || 0) * (parseFloat(productQuantity) || 1),
+    };
+    setItems([...items, newItem]);
+    setProductSearchTerm('');
+    setProductQuantity('1');
+    setProductCostPrice('0');
+    setSelectedProductIndex(-1);
+    setShowProductDropdown(false);
+    toast.success('Product added');
+  };
+
+  // Refs for better focus management
+  const quantityInputRef = useRef<HTMLInputElement>(null);
+  const priceInputRef = useRef<HTMLInputElement>(null);
+  const productSearchInputRef = useRef<HTMLInputElement>(null);
+
+  const handleProductSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setShowProductDropdown(true);
+      setSelectedProductIndex(prev => 
+        prev < filteredProductsForSearch.length - 1 ? prev + 1 : prev
+      );
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setShowProductDropdown(true);
+      setSelectedProductIndex(prev => prev > 0 ? prev - 1 : -1);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (selectedProductIndex >= 0 && filteredProductsForSearch[selectedProductIndex]) {
+        const selectedProduct = filteredProductsForSearch[selectedProductIndex];
+        setProductSearchTerm(selectedProduct.name);
+        setShowProductDropdown(false);
+        setSelectedProductIndex(-1);
+        // Focus on quantity field using ref
+        setTimeout(() => {
+          quantityInputRef.current?.focus();
+          quantityInputRef.current?.select();
+        }, 50);
+      } else if (filteredProductsForSearch.length > 0) {
+        // If no selection, just select first product and focus quantity
+        const firstProduct = filteredProductsForSearch[0];
+        setProductSearchTerm(firstProduct.name);
+        setShowProductDropdown(false);
+        setSelectedProductIndex(-1);
+        setTimeout(() => {
+          quantityInputRef.current?.focus();
+          quantityInputRef.current?.select();
+        }, 50);
+      }
+    } else if (e.key === 'Escape') {
+      setShowProductDropdown(false);
+      setSelectedProductIndex(-1);
+    }
+  };
+
+  const handleQuantityKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      // Focus on cost price field using ref
+      setTimeout(() => {
+        priceInputRef.current?.focus();
+        priceInputRef.current?.select();
+      }, 50);
+    }
+  };
+
+  const handleCostPriceKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      // Add product and reset
+      handleAddProductFromSearch();
+      // After adding, focus back on product search using ref
+      setTimeout(() => {
+        productSearchInputRef.current?.focus();
+        productSearchInputRef.current?.select();
+      }, 100);
+    }
+  };
+
+
   if (!isOpen) return null;
 
+  const handleSheetOpenChange = (open: boolean) => {
+    if (!open) {
+      onClose();
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-6xl max-h-[90vh] overflow-y-auto relative">
-        {/* Header */}
-        <div className="sticky top-0 bg-gray-900 border-b border-gray-800 p-6 flex items-center justify-between z-10">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-orange-500/10 text-orange-400">
-              <Truck size={24} />
-            </div>
-            <div>
-              <h2 className="text-2xl font-bold text-white">Add New Purchase</h2>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-800 rounded-lg"
-          >
-            <X size={20} />
-          </button>
-        </div>
-
-        {/* Content */}
-        <div className="p-6 space-y-6">
-          {/* Purchase Details */}
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <Label className="text-white mb-2 block">Supplier</Label>
-              <select
-                value={supplier}
-                onChange={(e) => setSupplier(e.target.value)}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white"
+    <>
+      <Sheet open={isOpen} onOpenChange={handleSheetOpenChange}>
+        <SheetContent 
+          side="right" 
+          className="bg-[#0B0F1A] border-l border-gray-800 p-0 overflow-hidden [&>button]:hidden"
+        >
+        <div className="flex flex-col h-full w-full">
+          {/* Header */}
+          <SheetHeader className="border-b border-gray-800 p-6 bg-[#0B0F1A]">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <button onClick={onClose} className="text-gray-400 hover:text-white">
+                  <X size={20} />
+                </button>
+                <div>
+                  <SheetTitle className="text-2xl font-bold text-white">New Purchase Order</SheetTitle>
+                  <p className="text-sm text-gray-400 mt-1">Standard Entry • {items.length} Items</p>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                onClick={async () => await handleSubmit(false)}
+                disabled={loading}
+                className="bg-gray-800 border-gray-700 text-white hover:bg-gray-700"
               >
-                <option value="">Select Supplier</option>
-                <option value="walkin">Walk-in Customer</option>
-                {suppliers.map((s) => (
-                  <option key={s.id} value={s.id.toString()}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
+                <FileText size={16} className="mr-2" />
+                Draft
+              </Button>
             </div>
+          </SheetHeader>
 
-            <div>
-              <Label className="text-white mb-2 block">Date</Label>
-              <div className="relative">
-                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+          {/* Content */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-[#0B0F1A]">
+            {/* Purchase Details - Top Section - 4 Fields: SUPPLIER, DATE, INVOICE NUMBER, SUPPLIER INVOICE NO. */}
+            <div className="grid grid-cols-4 gap-4">
+              <div>
+                <Label className="text-gray-400 text-sm mb-2 flex items-center gap-2">
+                  <User size={16} />
+                  SUPPLIER
+                </Label>
+                <select
+                  value={supplier}
+                  onChange={(e) => setSupplier(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === 'Tab') {
+                      e.preventDefault();
+                      const dateInput = document.querySelector('input[type="date"]') as HTMLInputElement;
+                      dateInput?.focus();
+                    }
+                  }}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white h-10"
+                >
+                  <option value="">Select Supplier</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id.toString()}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <Label className="text-gray-400 text-sm mb-2 flex items-center gap-2">
+                  <Calendar size={16} />
+                  DATE
+                </Label>
                 <Input
                   type="date"
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
-                  className="bg-gray-800 border-gray-700 text-white pl-10"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === 'Tab') {
+                      e.preventDefault();
+                      const invInput = document.querySelector('input[placeholder="PO-001"]') as HTMLInputElement;
+                      invInput?.focus();
+                      invInput?.select();
+                    }
+                  }}
+                  className="bg-gray-800 border-gray-700 text-white h-10"
+                />
+              </div>
+
+              <div>
+                <Label className="text-gray-400 text-sm mb-2 flex items-center gap-2">
+                  <FileText size={16} />
+                  INVOICE NUMBER
+                </Label>
+                <Input
+                  type="text"
+                  value={refNumber}
+                  onChange={(e) => setRefNumber(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === 'Tab') {
+                      e.preventDefault();
+                      const supInvInput = document.querySelector('input[placeholder="SI-001"]') as HTMLInputElement;
+                      supInvInput?.focus();
+                      supInvInput?.select();
+                    }
+                  }}
+                  placeholder="PO-001"
+                  className="bg-gray-800 border-gray-700 text-white h-10"
+                />
+              </div>
+
+              <div>
+                <Label className="text-gray-400 text-sm mb-2 flex items-center gap-2">
+                  <FileText size={16} />
+                  SUPPLIER INVOICE NO.
+                </Label>
+                <Input
+                  type="text"
+                  value={supplierInvoiceNo}
+                  onChange={(e) => setSupplierInvoiceNo(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === 'Tab') {
+                      e.preventDefault();
+                      const productSearch = document.querySelector('input[placeholder*="Scan barcode"]') as HTMLInputElement;
+                      productSearch?.focus();
+                    }
+                  }}
+                  placeholder="SI-001"
+                  className="bg-gray-800 border-gray-700 text-white h-10"
                 />
               </div>
             </div>
 
-            <div>
-              <Label className="text-white mb-2 block">Status</Label>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value as 'draft' | 'final')}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white"
-              >
-                <option value="draft">Draft</option>
-                <option value="final">Final</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Product Search */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-            <Input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Scan Barcode or Search Product..."
-              className="bg-gray-800 border-gray-700 text-white pl-10"
-            />
-            {searchTerm && (
-              <div className="absolute top-full left-0 right-0 mt-2 bg-gray-800 border border-gray-700 rounded-lg max-h-60 overflow-y-auto z-20">
-                {filteredProducts.length > 0 ? (
-                  filteredProducts.slice(0, 5).map((product) => (
-                    <button
-                      key={product.id}
-                      type="button"
-                      onClick={() => {
-                        addProduct(product);
-                        setSearchTerm('');
-                      }}
-                      className="w-full text-left px-4 py-2 hover:bg-gray-700 text-white"
-                    >
-                      <div className="font-medium">{product.name}</div>
-                      <div className="text-xs text-gray-400">{product.sku}</div>
-                    </button>
-                  ))
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      // Open new product page or modal
-                      window.open('/products/new', '_blank');
-                      setSearchTerm('');
-                    }}
-                    className="w-full text-left px-4 py-3 hover:bg-gray-700 text-white border-t border-gray-700 flex items-center gap-2"
-                  >
-                    <Plus size={18} className="text-blue-400" />
-                    <div>
-                      <div className="font-medium text-blue-400">Add New Product</div>
-                      <div className="text-xs text-gray-400">Create "{searchTerm}"</div>
-                    </div>
-                  </button>
-                )}
+            {/* Items Entry Section */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-gray-400">
+                  <FileText size={18} />
+                  <h3 className="text-sm font-semibold uppercase">ITEMS ENTRY</h3>
+                </div>
+                <span className="text-xs text-gray-500">Enter to move</span>
               </div>
-            )}
-          </div>
+              
+              <div className="flex gap-3 items-end">
+                <div className="flex-1">
+                  <Label className="text-gray-400 text-xs mb-2 block">1. Find Product</Label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                    <Input
+                      ref={productSearchInputRef}
+                      type="text"
+                      value={productSearchTerm}
+                      onChange={(e) => {
+                        setProductSearchTerm(e.target.value);
+                        setShowProductDropdown(true);
+                        setSelectedProductIndex(-1);
+                      }}
+                            onFocus={() => setShowProductDropdown(true)}
+                            onKeyDown={handleProductSearchKeyDown}
+                            onClick={(e) => e.stopPropagation()}
+                            placeholder="Scan barcode or type name..."
+                            className="bg-gray-800 border-gray-700 text-white pl-10"
+                          />
+                    {showProductDropdown && productSearchTerm && filteredProductsForSearch.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg max-h-60 overflow-y-auto z-20">
+                        {filteredProductsForSearch.slice(0, 5).map((product, index) => (
+                          <button
+                            key={product.id}
+                            type="button"
+                            onClick={() => {
+                              setProductSearchTerm(product.name);
+                              setShowProductDropdown(false);
+                              setSelectedProductIndex(-1);
+                              // Focus on quantity field - use more specific selector
+                              setTimeout(() => {
+                                const qtyInput = document.querySelector('input[type="number"][min="1"][placeholder="1"]') as HTMLInputElement;
+                                if (!qtyInput) {
+                                  // Fallback: find by label text
+                                  const labels = Array.from(document.querySelectorAll('label'));
+                                  const qtyLabel = labels.find(l => l.textContent?.includes('Quantity'));
+                                  if (qtyLabel) {
+                                    const nextInput = qtyLabel.nextElementSibling?.querySelector('input[type="number"]') as HTMLInputElement;
+                                    nextInput?.focus();
+                                    nextInput?.select();
+                                  }
+                                } else {
+                                  qtyInput.focus();
+                                  qtyInput.select();
+                                }
+                              }, 100);
+                            }}
+                            className={cn(
+                              "w-full text-left px-4 py-2 hover:bg-gray-700 text-white",
+                              selectedProductIndex === index && "bg-gray-700"
+                            )}
+                          >
+                            <div className="font-medium">{product.name}</div>
+                            <div className="text-xs text-gray-400">{product.sku}</div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="w-24">
+                  <Label className="text-gray-400 text-xs mb-2 block">2. Quantity</Label>
+                  <Input
+                    ref={quantityInputRef}
+                    type="number"
+                    min="1"
+                    value={productQuantity}
+                    onChange={(e) => setProductQuantity(e.target.value)}
+                    onKeyDown={handleQuantityKeyDown}
+                    placeholder="1"
+                    className="bg-gray-800 border-gray-700 text-white"
+                  />
+                </div>
+                
+                <div className="w-32">
+                  <Label className="text-gray-400 text-xs mb-2 block">3. Cost Price</Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                    <Input
+                      ref={priceInputRef}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={productCostPrice}
+                      onChange={(e) => setProductCostPrice(e.target.value)}
+                      onKeyDown={handleCostPriceKeyDown}
+                      placeholder="0"
+                      className="bg-gray-800 border-gray-700 text-white pl-7"
+                    />
+                  </div>
+                </div>
+                
+                <Button
+                  type="button"
+                  onClick={() => handleAddProductFromSearch()}
+                  className="bg-orange-600 hover:bg-orange-500 text-white"
+                >
+                  <ArrowDown size={16} className="mr-2" />
+                  Add
+                </Button>
+              </div>
+            </div>
 
-          {/* Product Table */}
-          <div className="border border-gray-800 rounded-lg overflow-hidden">
-            <table className="w-full">
-              <thead className="bg-gray-800/50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Product</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Stock</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase min-w-[200px]">Qty</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Unit Price</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Discount</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Subtotal</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800">
-                {items.length === 0 ? (
+            {/* Purchase Item List - Always Show */}
+            <div className="border border-gray-800 rounded-lg overflow-hidden">
+              <table className="w-full">
+                <thead className="bg-gray-800/50">
                   <tr>
-                    <td colSpan={7} className="px-4 py-12 text-center text-gray-500">
-                      No items added. Search or scan to add products.
-                    </td>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">#</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Product Details</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Packing</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Cost</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Qty</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Total</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase">Actions</th>
                   </tr>
-                ) : (
-                  items.map((item) => (
-                    <tr key={item.id} className="group hover:bg-gray-800/30">
-                      <td className="px-4 py-3">
-                        <div>
-                          <div className="text-white font-medium">{item.product_name}</div>
-                          <div className="text-xs text-gray-500">{item.sku}</div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge variant="outline" className="bg-green-500/10 text-green-400 border-green-500/20">
-                          {item.stock} Pc
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col gap-2 w-full min-w-[200px]">
-                          {item.packing && item.packing.totalPieces > 0 ? (
-                            // If packing data exists, show styled Qty button like Figma
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setCurrentPackingItem(item);
-                                  setPackingDialogOpen(true);
-                                }}
-                                className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-white text-sm font-medium transition-colors w-full justify-between"
-                              >
-                                <div className="flex items-center gap-2">
-                                  <Box className="w-4 h-4" />
-                                  <span>{item.packing.totalBoxes} Box</span>
-                                  <span>/</span>
-                                  <span>{item.packing.totalPieces} Pc</span>
-                                  <span>/</span>
-                                  <span className="text-green-300">{item.packing.totalMeters.toFixed(1)} M</span>
-                                </div>
-                                <Pencil className="w-4 h-4" />
-                              </button>
-                              <div className="text-xs text-gray-400 text-center">
-                                Qty: <span className="text-white font-semibold">{item.quantity.toFixed(2)} M</span>
-                              </div>
-                            </>
-                          ) : (
-                            // If no packing data, show "Add Packing" button on top, then quantity controls (Figma style)
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setCurrentPackingItem(item);
-                                  setPackingDialogOpen(true);
-                                }}
-                                className="text-xs bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-gray-700 transition-colors mb-2 opacity-0 group-hover:opacity-100 transition-opacity w-full"
-                              >
-                                <Box size={12} />
-                                <span>Add Packing</span>
-                              </button>
-                              <div className="flex items-center gap-1.5 w-full">
-                                <button
-                                  type="button"
-                                  onClick={() => updateQuantity(item.id, item.quantity - 1)}
-                                  className="p-1.5 rounded-md bg-gray-800 hover:bg-gray-700 text-white border border-gray-700 transition-colors flex items-center justify-center flex-shrink-0"
-                                  style={{ borderWidth: '1px' }}
-                                >
-                                  <Minus size={14} />
-                                </button>
-                                <Input
-                                  type="number"
-                                  min="1"
-                                  step="0.01"
-                                  value={item.quantity}
-                                  onChange={(e) => updateQuantity(item.id, parseFloat(e.target.value) || 1)}
-                                  onFocus={(e) => e.target.select()}
-                                  className="flex-1 min-w-0 text-center bg-gray-800 border-gray-700 text-white text-sm font-medium h-[30px] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [-moz-appearance:textfield]"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => updateQuantity(item.id, item.quantity + 1)}
-                                  className="p-1.5 rounded-md bg-gray-800 hover:bg-gray-700 text-white border border-gray-700 transition-colors flex items-center justify-center flex-shrink-0"
-                                  style={{ borderWidth: '1px' }}
-                                >
-                                  <Plus size={14} />
-                                </button>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={item.unit_price}
-                          onChange={(e) => updateUnitPrice(item.id, parseFloat(e.target.value) || 0)}
-                          onFocus={(e) => e.target.select()}
-                          className="w-24 bg-gray-800 border-gray-700 text-white"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <Input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={item.discount}
-                          onChange={(e) => updateDiscount(item.id, parseFloat(e.target.value) || 0)}
-                          onFocus={(e) => e.target.select()}
-                          className="w-24 bg-gray-800 border-gray-700 text-white"
-                        />
-                      </td>
-                      <td className="px-4 py-3 text-white font-medium">
-                        {formatCurrency(item.subtotal)}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => removeItem(item.id)}
-                          className="text-red-400 hover:text-red-300"
-                        >
-                          <Trash2 size={18} />
-                        </button>
+                </thead>
+                <tbody className="divide-y divide-gray-800">
+                  {items.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-12 text-center text-gray-500">
+                        No items added. Search and add products above.
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Notes and Summary */}
-          <div className="grid grid-cols-2 gap-6">
-            {/* Notes */}
-            <div>
-              <Label className="text-white mb-2 block">Sale Notes / Staff Notes</Label>
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Add any notes relevant to this transaction..."
-                className="w-full h-32 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white placeholder:text-gray-500 resize-none"
-              />
+                  ) : (
+                    items.map((item, index) => (
+                      <tr key={item.id} className="hover:bg-gray-800/30">
+                        <td className="px-4 py-3 text-gray-400">{String(index + 1).padStart(2, '0')}</td>
+                        <td className="px-4 py-3">
+                          <div>
+                            <div className="text-white font-medium">{item.product_name}</div>
+                            <div className="text-xs text-gray-500">{item.sku}</div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          {item.packing && item.packing.totalBoxes > 0 ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setCurrentPackingItem(item);
+                                setPackingDialogOpen(true);
+                              }}
+                              className="bg-orange-600 hover:bg-orange-500 text-white border-orange-500"
+                            >
+                              <Truck size={14} className="mr-1" />
+                              {item.packing.totalBoxes} / {item.packing.totalMeters.toFixed(0)} M
+                            </Button>
+                          ) : (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setCurrentPackingItem(item);
+                                setPackingDialogOpen(true);
+                              }}
+                              className="bg-gray-800 border-gray-700 text-gray-400 hover:text-white hover:bg-gray-700"
+                            >
+                              <Plus size={14} className="mr-1" />
+                              Add Pkg
+                            </Button>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <Input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={item.unit_price}
+                            onChange={(e) => updateUnitPrice(item.id, parseFloat(e.target.value) || 0)}
+                            onFocus={(e) => e.target.select()}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-24 bg-gray-800 border-gray-700 text-white"
+                          />
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                              className="p-1 rounded bg-gray-800 hover:bg-gray-700 text-white"
+                            >
+                              <Minus size={14} />
+                            </button>
+                            <Input
+                              type="number"
+                              min="1"
+                              step="0.01"
+                              value={item.quantity}
+                              onChange={(e) => updateQuantity(item.id, parseFloat(e.target.value) || 1)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-16 text-center bg-gray-800 border-gray-700 text-white text-sm"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                              className="p-1 rounded bg-gray-800 hover:bg-gray-700 text-white"
+                            >
+                              <Plus size={14} />
+                            </button>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-white font-medium">{formatCurrency(item.subtotal)}</td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => removeItem(item.id)}
+                            className="text-red-400 hover:text-red-300"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
 
-            {/* Summary */}
-            <div className="bg-gray-800/50 rounded-lg p-4 space-y-3">
-              {/* Packing Breakdown */}
-              {items.length > 0 && (
-                <div className="mb-4 pb-3 border-b border-gray-700">
-                  <div className="text-xs text-gray-500 mb-2">Packing Summary</div>
-                  <div className="flex items-center gap-4 text-sm">
-                    {packingTotals.totalBoxes > 0 && (
-                      <>
-                        <div className="flex items-center gap-1.5">
-                          <Box className="w-3.5 h-3.5 text-blue-400" />
-                          <span className="text-gray-400">{packingTotals.totalBoxes}</span>
-                          <span className="text-gray-500">Box</span>
-                        </div>
-                        <span className="text-gray-600">/</span>
-                      </>
-                    )}
-                    {packingTotals.totalPieces > 0 && (
-                      <>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-gray-400">{packingTotals.totalPieces}</span>
-                          <span className="text-gray-500">Pc</span>
-                        </div>
-                        <span className="text-gray-600">/</span>
-                      </>
-                    )}
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-green-400 font-medium">{packingTotals.totalMeters.toFixed(2)}</span>
-                      <span className="text-gray-500">M</span>
+            {/* Two Column Layout: COGS & SUMMARY (Left) | PAYMENT (Right) */}
+            <div className="grid grid-cols-2 gap-6">
+              {/* Left Column */}
+              <div className="space-y-6">
+                {/* COGS Section */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 text-gray-400">
+                    <DollarSign size={18} />
+                    <h3 className="text-sm font-semibold uppercase">COGS (Cost of Goods Sold)</h3>
+                  </div>
+                  <div className="space-y-3">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={cogsAmount}
+                      onChange={(e) => setCogsAmount(e.target.value)}
+                      placeholder="Amount"
+                      className="bg-gray-800 border-gray-700 text-white"
+                    />
+                    <Input
+                      type="text"
+                      value={cogsNotes}
+                      onChange={(e) => setCogsNotes(e.target.value)}
+                      placeholder="Notes (optional)"
+                      className="bg-gray-800 border-gray-700 text-white"
+                    />
+                  </div>
+                </div>
+
+                {/* SUMMARY Section */}
+                <div className="bg-gray-800/50 rounded-lg p-4 space-y-3">
+                  <h3 className="text-sm font-semibold text-gray-400 uppercase mb-3">INVOICE SUMMARY</h3>
+                  <div className="flex justify-between text-gray-400">
+                    <span>Items Subtotal:</span>
+                    <span className="text-white">{formatCurrency(itemsSubtotal)}</span>
+                  </div>
+                  <div className="flex justify-between items-center gap-2">
+                    <span className="text-gray-400">% Discount:</span>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={discountPercent}
+                        onChange={(e) => setDiscountPercent(e.target.value)}
+                        className="bg-gray-800 border-gray-700 text-white rounded px-2 py-1 text-sm"
+                      >
+                        <option value="0">0%</option>
+                        <option value="5">5%</option>
+                        <option value="10">10%</option>
+                        <option value="15">15%</option>
+                        <option value="20">20%</option>
+                      </select>
+                      <Input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={discountPercent}
+                        onChange={(e) => setDiscountPercent(e.target.value)}
+                        className="w-20 bg-gray-800 border-gray-700 text-white text-sm"
+                      />
+                    </div>
+                  </div>
+                  {cogs > 0 && (
+                    <div className="flex justify-between text-gray-400">
+                      <span>COGS:</span>
+                      <span className="text-white">{formatCurrency(cogs)}</span>
+                    </div>
+                  )}
+                  <div className="pt-3 border-t border-gray-700">
+                    <div className="flex justify-between">
+                      <span className="text-lg font-semibold text-white">Grand Total:</span>
+                      <span className="text-2xl font-bold text-orange-400">{formatCurrency(grandTotal)}</span>
                     </div>
                   </div>
                 </div>
-              )}
-              <div className="flex justify-between text-gray-400">
-                <span>Subtotal:</span>
-                <span className="text-white">{formatCurrency(subtotal)}</span>
               </div>
-              <div className="flex justify-between text-gray-400">
-                <span>Discount:</span>
-                <span className="text-red-400">-{formatCurrency(discount)}</span>
-              </div>
-              <div className="flex justify-between text-gray-400">
-                <span>Order Tax (10%):</span>
-                <span className="text-white">{formatCurrency(tax)}</span>
-              </div>
-              <div className="flex justify-between text-gray-400">
-                <span>Shipping & Handling:</span>
-                <div className="flex items-center gap-2">
-                  <span className="text-white">{formatCurrency(shipping)}</span>
-                  <button
-                    type="button"
-                    className="text-blue-400 hover:text-blue-300 text-sm"
-                    onClick={() => toast.info('Shipping feature coming soon')}
-                  >
-                    Add (+)
-                  </button>
+
+              {/* Right Column - PAYMENT */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-gray-400 uppercase">PAYMENT</h3>
+                  {paymentType === 'partial' && (
+                    <Badge className="bg-orange-500/10 text-orange-400 border-orange-500/20 rounded-md">
+                      Partial
+                    </Badge>
+                  )}
                 </div>
-              </div>
-              <div className="pt-3 border-t border-gray-700">
-                <div className="flex justify-between">
-                  <span className="text-lg font-semibold text-white">Grand Total:</span>
-                  <span className="text-2xl font-bold text-orange-400">{formatCurrency(grandTotal)}</span>
+                
+                <div className="bg-gray-800/50 rounded-lg p-4">
+                  <div className="text-sm text-gray-400 mb-2">INVOICE AMOUNT</div>
+                  <div className="text-3xl font-bold text-white mb-4">{formatCurrency(grandTotal)}</div>
+                  
+                  <div className="space-y-3">
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPaymentType('cash')}
+                        className={cn(
+                          "flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                          paymentType === 'cash'
+                            ? "bg-green-600 text-white"
+                            : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                        )}
+                      >
+                        Full Paid
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPaymentType('partial')}
+                        className={cn(
+                          "flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                          paymentType === 'partial'
+                            ? "bg-orange-600 text-white"
+                            : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                        )}
+                      >
+                        Partial
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPaymentType('credit')}
+                        className={cn(
+                          "flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                          paymentType === 'credit'
+                            ? "bg-blue-600 text-white"
+                            : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                        )}
+                      >
+                        Credit
+                      </button>
+                    </div>
+                    {paymentType === 'cash' && (
+                      <div className="flex items-center gap-3">
+                        <CheckCircle2 size={20} className="text-green-500" />
+                        <p className="text-sm text-gray-400">Full payment marked as Paid</p>
+                      </div>
+                    )}
+                    {paymentType === 'partial' && (
+                      <div className="mt-2">
+                        <Label className="text-gray-400 text-xs mb-2 block">Partial Amount</Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          max={grandTotal}
+                          placeholder="Enter partial amount"
+                          className="bg-gray-800 border-gray-700 text-white"
+                        />
+                      </div>
+                    )}
+                    {paymentType === 'credit' && (
+                      <div className="flex items-center gap-3 mt-2">
+                        <p className="text-sm text-gray-400">Credit payment - Amount due: {formatCurrency(grandTotal)}</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Action Buttons */}
-          <div className="flex items-center justify-end gap-3 pt-6 border-t border-gray-800">
-            <Button type="button" variant="ghost" onClick={onClose} disabled={loading}>
-              Cancel
-            </Button>
+          {/* Sticky Footer - Action Buttons */}
+          <div className="sticky bottom-0 bg-[#0B0F1A] border-t border-gray-800 p-6 flex items-center justify-end gap-3 z-10">
             <Button
               type="button"
               variant="outline"
-              onClick={() => handleSubmit(false)}
+              onClick={async () => await handleSubmit(false)}
               disabled={loading}
               className="bg-gray-800 border-gray-700 text-white hover:bg-gray-700"
             >
-              Save as Draft
+              <Save size={16} className="mr-2" />
+              Save
             </Button>
             <Button
               type="button"
-              onClick={() => handleSubmit(true)}
-              isLoading={loading}
-              className="bg-green-600 hover:bg-green-500 text-white"
+              onClick={async () => await handleSubmit(true)}
+              disabled={loading}
+              className="bg-orange-600 hover:bg-orange-500 text-white"
             >
-              Finalize Purchase • {formatCurrency(grandTotal)}
+              <Printer size={16} className="mr-2" />
+              Save & Print
             </Button>
           </div>
         </div>
+        </SheetContent>
+      </Sheet>
 
-        {/* Help Icon */}
-        <button className="fixed bottom-6 right-6 p-3 bg-gray-800 hover:bg-gray-700 rounded-full text-gray-400 hover:text-white transition-colors">
-          <HelpCircle size={20} />
-        </button>
-      </div>
-
-      {/* Packing Entry Dialog */}
+      {/* Packing Overlay - Secondary Layer (z-index: 60) */}
       {currentPackingItem && (
-        <PackingEntryDialog
+        <PackingOverlay
           isOpen={packingDialogOpen}
           onClose={() => {
             setPackingDialogOpen(false);
             setCurrentPackingItem(null);
           }}
           onSave={(packingData) => {
-            if (packingData) {
+            if (packingData && currentPackingItem) {
               setItems(items.map(item => {
                 if (item.id === currentPackingItem.id) {
                   // If packing data exists, update quantity from totalMeters (not totalPieces)
@@ -844,7 +1284,22 @@ export function AddPurchaseModal({ isOpen, onClose, onSuccess }: AddPurchaseModa
                   const subtotal = (item.unit_price * newQuantity) - item.discount;
                   return { 
                     ...item, 
-                    packing: packingData,
+                    packing: {
+                      boxes: packingData.boxes.map(box => ({
+                        id: box.id,
+                        pieces: box.pieces.map((p: { id: string; meters: number | string }) => ({
+                          id: p.id,
+                          meters: typeof p.meters === 'number' ? p.meters.toString() : String(p.meters || '')
+                        }))
+                      })),
+                      loosePieces: packingData.loosePieces.map((p: { id: string; meters: number | string }) => ({
+                        id: p.id,
+                        meters: typeof p.meters === 'number' ? p.meters.toString() : String(p.meters || '')
+                      })),
+                      totalBoxes: packingData.totalBoxes,
+                      totalPieces: packingData.totalPieces,
+                      totalMeters: packingData.totalMeters
+                    },
                     quantity: newQuantity,
                     subtotal
                   };
@@ -856,12 +1311,27 @@ export function AddPurchaseModal({ isOpen, onClose, onSuccess }: AddPurchaseModa
             setPackingDialogOpen(false);
             setCurrentPackingItem(null);
           }}
-          productName={currentPackingItem.product_name}
-          productSku={currentPackingItem.sku}
-          initialData={currentPackingItem.packing || null}
+          productName={currentPackingItem?.product_name || ''}
+          productSku={currentPackingItem?.sku || ''}
+          initialData={currentPackingItem?.packing ? {
+            boxes: currentPackingItem.packing.boxes.map(box => ({
+              ...box,
+              pieces: box.pieces.map(p => ({
+                ...p,
+                meters: typeof p.meters === 'number' ? p.meters.toString() : p.meters
+              }))
+            })),
+            loosePieces: currentPackingItem.packing.loosePieces.map(p => ({
+              ...p,
+              meters: typeof p.meters === 'number' ? p.meters.toString() : p.meters
+            })),
+            totalBoxes: currentPackingItem.packing.totalBoxes,
+            totalPieces: currentPackingItem.packing.totalPieces,
+            totalMeters: currentPackingItem.packing.totalMeters
+          } : null}
         />
       )}
-    </div>
+    </>
   );
 }
 

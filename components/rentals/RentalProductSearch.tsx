@@ -1,12 +1,14 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Search, Tag, CalendarOff, Box, BadgeAlert } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Search, Tag, CalendarOff, Box, BadgeAlert, Plus } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/utils';
-import apiClient, { ApiResponse } from '@/lib/api/apiClient';
+import { supabase } from '@/utils/supabase/client';
 import { Product } from '@/lib/types/modern-erp';
+import { listProducts } from '@/lib/services/productService';
 
 export interface SearchProduct {
   id: string | number;
@@ -25,58 +27,189 @@ export interface SearchProduct {
 interface RentalProductSearchProps {
   onSelect: (product: SearchProduct) => void;
   selectedProduct?: SearchProduct | null;
+  onAddProduct?: () => void;
 }
 
-export const RentalProductSearch = ({ onSelect, selectedProduct }: RentalProductSearchProps) => {
+export const RentalProductSearch = ({ onSelect, selectedProduct, onAddProduct }: RentalProductSearchProps) => {
   const [open, setOpen] = useState(false);
   const [inputValue, setInputValue] = useState(selectedProduct?.name || '');
   const [products, setProducts] = useState<SearchProduct[]>([]);
   const [loading, setLoading] = useState(false);
+  const hasLoadedRef = useRef(false);
 
-  // Load rentable products from API
-  useEffect(() => {
-    const loadProducts = async () => {
-      setLoading(true);
-      try {
-        const response = await apiClient.get<ApiResponse<Product[]>>('/rentals/products');
-        if (response.data?.data) {
-          // Map products to SearchProduct format
-          const mappedProducts: SearchProduct[] = response.data.data.map((product) => {
-            let status: SearchProduct['status'] = 'available';
-            let unavailableReason: string | undefined;
-
-            if (!product.is_rentable) {
-              status = 'retail_only';
-              unavailableReason = 'Retail only';
-            }
-
-            return {
-              id: product.id,
-              name: product.name,
-              sku: product.sku,
-              image: product.image,
-              status,
-              unavailableReason,
-              rentPrice: product.rental_price || null,
-              retailPrice: 0, // Will need to get from variations
-              securityDeposit: product.security_deposit_amount || null,
-            };
-          });
-          setProducts(mappedProducts);
-        }
-      } catch (error) {
-        console.error('Failed to load products:', error);
-        // Fallback to empty array
-        setProducts([]);
-      } finally {
-        setLoading(false);
+  // Load products from Supabase
+  const loadProducts = useCallback(async (searchTerm?: string) => {
+    console.log('Loading products with search:', searchTerm || 'all');
+    setLoading(true);
+    try {
+      // Get current user's business_id
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error('Not authenticated');
       }
-    };
 
-    if (open) {
-      loadProducts();
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('business_id')
+        .eq('user_id', session.user.id)
+        .single();
+
+      if (!profile) {
+        throw new Error('Business not found');
+      }
+
+      console.log('Business ID:', profile.business_id);
+
+      // Fetch ALL active products (like product list/search) - not just rentable
+      const productsData = await listProducts({
+        is_inactive: false,
+        search: searchTerm || undefined,
+      });
+
+      console.log('Products loaded:', productsData?.length || 0);
+
+      if (!productsData || productsData.length === 0) {
+        console.log('No products found');
+        setProducts([]);
+        setLoading(false);
+        return;
+      }
+
+      // Get additional product fields from Supabase
+      const productIds = productsData.map(p => p.id);
+      const { data: productsWithDetails, error: detailsError } = await supabase
+        .from('products')
+        .select(`
+          id,
+          image,
+          is_rentable,
+          rental_price,
+          security_deposit_amount,
+          rent_duration_unit
+        `)
+        .in('id', productIds);
+
+      if (detailsError) {
+        console.error('Product details query error:', detailsError);
+        // Continue without details
+      }
+
+      // Create a map of product details
+      const productDetailsMap = new Map();
+      if (productsWithDetails) {
+        productsWithDetails.forEach((p: any) => {
+          productDetailsMap.set(p.id, p);
+        });
+      }
+
+      // productIds already defined above
+
+      // Fetch variations separately
+      const { data: variationsData, error: variationsError } = await supabase
+        .from('variations')
+        .select('id, product_id, name, sub_sku, retail_price, wholesale_price')
+        .in('product_id', productIds);
+
+      if (variationsError) {
+        console.error('Variations query error:', variationsError);
+        // Continue without variations
+      }
+
+      // Get unique category and brand IDs
+      const categoryIds = [...new Set(productsData.map(p => p.category_id).filter(Boolean))];
+      const brandIds = [...new Set(productsData.map(p => p.brand_id).filter(Boolean))];
+
+      // Fetch categories separately
+      let categoriesMap = new Map();
+      if (categoryIds.length > 0) {
+        const { data: categoriesData, error: categoriesError } = await supabase
+          .from('categories')
+          .select('id, name')
+          .in('id', categoryIds);
+
+        if (!categoriesError && categoriesData) {
+          categoriesMap = new Map(categoriesData.map(c => [c.id, c.name]));
+        }
+      }
+
+      // Fetch brands separately
+      let brandsMap = new Map();
+      if (brandIds.length > 0) {
+        const { data: brandsData, error: brandsError } = await supabase
+          .from('brands')
+          .select('id, name')
+          .in('id', brandIds);
+
+        if (!brandsError && brandsData) {
+          brandsMap = new Map(brandsData.map(b => [b.id, b.name]));
+        }
+      }
+
+      // Group variations by product_id
+      const variationsByProduct = new Map<number, any[]>();
+      if (variationsData) {
+        variationsData.forEach((v: any) => {
+          if (!variationsByProduct.has(v.product_id)) {
+            variationsByProduct.set(v.product_id, []);
+          }
+          variationsByProduct.get(v.product_id)!.push(v);
+        });
+      }
+
+      // Map products to SearchProduct format
+      const mappedProducts: SearchProduct[] = productsData.map((product: Product) => {
+        const details = productDetailsMap.get(product.id) || {};
+        
+        let status: SearchProduct['status'] = 'available';
+        let unavailableReason: string | undefined;
+
+        if (!details.is_rentable) {
+          status = 'retail_only';
+          unavailableReason = 'Retail only';
+        }
+
+        // Get retail price from first variation if available
+        const productVariations = variationsByProduct.get(product.id) || [];
+        const firstVariation = productVariations.length > 0 ? productVariations[0] : null;
+        const retailPrice = firstVariation?.retail_price || 0;
+
+        return {
+          id: product.id,
+          name: product.name,
+          sku: product.sku,
+          image: details.image || undefined,
+          status,
+          unavailableReason,
+          rentPrice: details.rental_price || null,
+          retailPrice,
+          securityDeposit: details.security_deposit_amount || null,
+          category: product.category_id ? categoriesMap.get(product.category_id) : undefined,
+          brand: product.brand_id ? brandsMap.get(product.brand_id) : undefined,
+        };
+      });
+      
+      console.log('Mapped products:', mappedProducts.length);
+      setProducts(mappedProducts);
+    } catch (error) {
+      console.error('Failed to load products:', error);
+      console.error('Error details:', {
+        message: error instanceof Error ? error.message : 'Unknown error',
+        error: error,
+      });
+      // Fallback to empty array
+      setProducts([]);
+    } finally {
+      setLoading(false);
     }
-  }, [open]);
+  }, []);
+
+  // Load products when dropdown opens or when user types
+  useEffect(() => {
+    if (open || inputValue.trim()) {
+      const searchTerm = inputValue.trim();
+      loadProducts(searchTerm || undefined);
+    }
+  }, [open, inputValue, loadProducts]);
 
   // Update input when selected product changes
   useEffect(() => {
@@ -92,18 +225,28 @@ export const RentalProductSearch = ({ onSelect, selectedProduct }: RentalProduct
     setInputValue(product.name);
   };
 
-  const filteredProducts = products.filter(
-    (p) =>
-      p.name.toLowerCase().includes(inputValue.toLowerCase()) ||
-      p.sku.toLowerCase().includes(inputValue.toLowerCase())
-  );
+  const filteredProducts = inputValue.trim()
+    ? products.filter((p) => {
+        const searchTerm = inputValue.toLowerCase().trim();
+        // Search in product name, SKU, and variations' sub_sku
+        const matchesName = p.name.toLowerCase().includes(searchTerm);
+        const matchesSku = p.sku.toLowerCase().includes(searchTerm);
+        const matchesCategory = p.category?.toLowerCase().includes(searchTerm);
+        const matchesBrand = p.brand?.toLowerCase().includes(searchTerm);
+        
+        return matchesName || matchesSku || matchesCategory || matchesBrand;
+      })
+    : products; // Show all products when input is empty
 
   return (
-    <div className="relative">
+    <div className="relative w-full">
       <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={14} />
       <Input
         value={inputValue}
-        onChange={(e) => setInputValue(e.target.value)}
+        onChange={(e) => {
+          setInputValue(e.target.value);
+          setOpen(true); // Open dropdown when typing
+        }}
         placeholder="Search Bridal Dress (Name/SKU)..."
         className="bg-gray-900 border-gray-700 pl-9 text-white focus:border-pink-500 h-9 w-full"
         onClick={() => setOpen(true)}
@@ -117,11 +260,34 @@ export const RentalProductSearch = ({ onSelect, selectedProduct }: RentalProduct
             className="fixed inset-0 z-40"
             onClick={() => setOpen(false)}
           />
-          <div className="absolute z-50 w-full mt-1 bg-gray-900 border border-gray-800 rounded-lg shadow-xl max-h-96 overflow-auto">
+          <div 
+            className="absolute z-50 left-0 right-0 mt-1 bg-gray-900 border border-gray-800 rounded-lg shadow-xl max-h-96 overflow-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
             {loading ? (
               <div className="p-4 text-center text-gray-400 text-sm">Loading products...</div>
             ) : filteredProducts.length === 0 ? (
-              <div className="p-4 text-center text-gray-400 text-sm">No products found</div>
+              <div className="p-4 text-center">
+                <p className="text-gray-400 text-sm mb-3">No products found</p>
+                {onAddProduct && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setOpen(false);
+                      setTimeout(() => {
+                        onAddProduct();
+                      }, 100);
+                    }}
+                    className="bg-gray-800 border-gray-700 text-white hover:bg-gray-700"
+                  >
+                    <Plus size={14} className="mr-2" />
+                    Add New Product
+                  </Button>
+                )}
+              </div>
             ) : (
               <div className="p-2">
                 {filteredProducts.map((product) => {

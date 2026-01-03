@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { Badge } from '@/components/ui/Badge';
 import { RentalBooking } from '@/lib/types/modern-erp';
-import apiClient, { getErrorMessage, ApiResponse } from '@/lib/api/apiClient';
+import { supabase } from '@/utils/supabase/client';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -48,26 +48,44 @@ export const ReturnDressModal = ({ isOpen, onClose, booking, onSuccess }: Return
     setIsSubmitting(true);
 
     try {
-      // Use the status update endpoint with return-specific fields
-      const response = await apiClient.patch<ApiResponse<RentalBooking>>(
-        `/rentals/${booking.id}/status`,
-        {
-          status: 'returned',
-          actualReturnDate: new Date().toISOString(),
-          penaltyAmount: penalty,
-          notes: returnNotes.trim() || undefined,
-        }
-      );
-
-      if (response.data?.success) {
-        toast.success('Return processed successfully!');
-        onSuccess?.();
-        onClose();
-      } else {
-        throw new Error(response.data?.error?.message || 'Failed to process return');
+      // Get current user's business_id for RLS
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error('Not authenticated');
       }
+
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('business_id')
+        .eq('user_id', session.user.id)
+        .single();
+
+      if (!profile) {
+        throw new Error('Business not found');
+      }
+
+      // Update rental booking status directly in Supabase
+      const { error: updateError } = await supabase
+        .from('rental_bookings')
+        .update({
+          status: 'returned',
+          actual_return_date: new Date().toISOString(),
+          penalty_amount: penalty,
+          notes: returnNotes.trim() || null,
+        })
+        .eq('id', booking.id)
+        .eq('business_id', profile.business_id);
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      toast.success('Return processed successfully!');
+      onSuccess?.();
+      onClose();
     } catch (error) {
-      const errorMessage = getErrorMessage(error);
+      console.error('Failed to process return:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to process return';
       toast.error(`Failed to process return: ${errorMessage}`);
     } finally {
       setIsSubmitting(false);

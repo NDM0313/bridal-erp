@@ -51,6 +51,8 @@ interface CartItem {
   quantity: number;
   unitId: number;
   image?: string | null;
+  editedPrice?: number; // User-edited price per unit
+  discountAmount?: number; // Discount amount for this item
 }
 
 interface Variation {
@@ -87,9 +89,9 @@ export function ModernPOS() {
   const [brands, setBrands] = useState<{ id: number; name: string }[]>([]);
   const [stockMap, setStockMap] = useState<Map<number, number>>(new Map());
   const [customerName, setCustomerName] = useState('');
-  const [discount, setDiscount] = useState(0);
   const [todaysSales, setTodaysSales] = useState(0);
-  const [isWholesale, setIsWholesale] = useState(false);
+  const [editingPrice, setEditingPrice] = useState<number | null>(null); // variationId being edited
+  const [editingDiscount, setEditingDiscount] = useState<number | null>(null); // variationId being edited
 
   useEffect(() => {
     loadProducts();
@@ -376,6 +378,8 @@ export function ModernPOS() {
         quantity: 1,
         unitId: variation.unit_id || 0,
         image: product.image || null,
+        editedPrice: undefined, // No custom price initially
+        discountAmount: 0, // No discount initially
       }];
     });
 
@@ -422,26 +426,27 @@ export function ModernPOS() {
     return matchesSearch && categoryMatch && brandMatch;
   });
 
-  // Calculate totals based on pricing mode
-  const subtotal = cart.reduce((sum, item) => {
-    const price = isWholesale ? item.wholesalePrice : item.retailPrice;
-    return sum + (price * item.quantity);
+  // Calculate totals (use edited price if available, apply item discounts)
+  // Subtotal BEFORE discount
+  const subtotalBeforeDiscount = cart.reduce((sum, item) => {
+    const unitPrice = item.editedPrice !== undefined ? item.editedPrice : item.retailPrice;
+    const itemSubtotal = unitPrice * item.quantity;
+    return sum + itemSubtotal;
   }, 0);
   
-  const discountAmount = subtotal * (discount / 100);
-  const afterDiscount = subtotal - discountAmount;
-  const tax = afterDiscount * 0.1; // 10% tax
-  const total = afterDiscount + tax;
+  // Total discount from all items
+  const totalDiscount = cart.reduce((sum, item) => {
+    return sum + (item.discountAmount || 0);
+  }, 0);
+  
+  // Subtotal AFTER discount
+  const subtotal = subtotalBeforeDiscount - totalDiscount;
+  const tax = subtotal * 0.1; // 10% tax
+  const total = subtotal + tax;
 
   const handlePayment = async (paymentMethod: 'Cash' | 'Card') => {
     if (cart.length === 0) {
       toast.error('Cart is empty');
-      return;
-    }
-
-    // Validate discount
-    if (discount < 0 || discount > 100) {
-      toast.error('Discount must be between 0 and 100%');
       return;
     }
 
@@ -468,33 +473,159 @@ export function ModernPOS() {
 
       const locations = locationsData[0];
 
-      const saleData: CreateSaleDto = {
-        locationId: locations.id,
-        customerType: isWholesale ? 'wholesale' : 'retail',
-        items: cart.map(item => ({
-          variationId: item.variationId,
-          quantity: item.quantity,
-          unitId: item.unitId,
-        })),
-        paymentMethod: paymentMethod,
-        discountType: discount > 0 ? 'percentage' : undefined,
-        discountAmount: discount > 0 ? discount : undefined,
-        additionalNotes: customerName ? `Customer: ${customerName}` : undefined,
-        status: 'final',
-      };
+      // Get business_id from profile
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('business_id')
+        .eq('user_id', session.user.id)
+        .single();
 
-      const response = await salesApi.create(saleData);
-
-      if (response.success) {
-        toast.success(`${paymentMethod} payment of ${formatCurrency(total)} processed successfully!`);
-        setCart([]);
-        setCustomerName('');
-        setDiscount(0);
-        setIsWholesale(false);
-        loadTodaysSales();
-      } else {
-        throw new Error(response.error?.message || 'Failed to process payment');
+      if (!profile?.business_id) {
+        throw new Error('Business not found');
       }
+
+      // Generate invoice number
+      const invoiceNo = `POS-${Date.now()}`;
+
+      // Calculate totals with edited prices and discounts
+      let totalBeforeTax = 0;
+      const processedItems = [];
+
+      for (const item of cart) {
+        const unitPrice = item.editedPrice !== undefined ? item.editedPrice : item.retailPrice;
+        const itemSubtotal = unitPrice * item.quantity;
+        const itemDiscount = item.discountAmount || 0;
+        const itemTotal = itemSubtotal - itemDiscount;
+        
+        totalBeforeTax += itemTotal;
+        
+        processedItems.push({
+          product_id: item.productId,
+          variation_id: item.variationId,
+          quantity: item.quantity,
+          unit_id: item.unitId,
+          unit_price: unitPrice,
+          line_discount_amount: itemDiscount,
+          line_total: itemTotal,
+        });
+      }
+
+      const taxAmount = totalBeforeTax * 0.1;
+      const finalTotal = totalBeforeTax + taxAmount;
+
+      // Create transaction directly in Supabase
+      const { data: transaction, error: transactionError } = await supabase
+        .from('transactions')
+        .insert({
+          business_id: profile.business_id,
+          location_id: locations.id,
+          type: 'sell',
+          status: 'final',
+          payment_status: 'paid',
+          customer_type: 'retail',
+          invoice_no: invoiceNo,
+          transaction_date: new Date().toISOString(),
+          total_before_tax: totalBeforeTax,
+          tax_amount: taxAmount,
+          discount_amount: 0, // No global discount
+          final_total: finalTotal,
+          additional_notes: customerName ? `Customer: ${customerName}` : null,
+          created_by: session.user.id,
+        })
+        .select()
+        .single();
+
+      if (transactionError) {
+        console.error('Transaction error:', transactionError);
+        throw new Error(`Failed to create transaction: ${transactionError.message}`);
+      }
+
+      // Create transaction sell lines
+      const sellLines = processedItems.map(item => ({
+        transaction_id: transaction.id,
+        product_id: item.product_id,
+        variation_id: item.variation_id,
+        quantity: item.quantity,
+        unit_id: item.unit_id,
+        unit_price: item.unit_price,
+        line_discount_amount: item.line_discount_amount,
+        line_total: item.line_total,
+      }));
+
+      const { error: linesError } = await supabase
+        .from('transaction_sell_lines')
+        .insert(sellLines);
+
+      if (linesError) {
+        // Rollback transaction
+        await supabase.from('transactions').delete().eq('id', transaction.id);
+        console.error('Sell lines error:', linesError);
+        throw new Error(`Failed to create sell lines: ${linesError.message}`);
+      }
+
+      // Update stock for each item
+      for (const item of cart) {
+        const variation = products.find(v => v.id === item.variationId);
+        if (!variation?.product?.enable_stock) continue;
+
+        // Get unit multiplier for conversion
+        const { data: unitData } = await supabase
+          .from('units')
+          .select('base_unit_id, base_unit_multiplier')
+          .eq('id', item.unitId)
+          .single();
+
+        let qtyInPieces = item.quantity;
+        if (unitData?.base_unit_multiplier) {
+          qtyInPieces = item.quantity * parseFloat(unitData.base_unit_multiplier.toString());
+        }
+
+        // Get current stock
+        const { data: currentStock } = await supabase
+          .from('variation_location_details')
+          .select('qty_available')
+          .eq('variation_id', item.variationId)
+          .eq('location_id', locations.id)
+          .single();
+
+        if (currentStock) {
+          const currentQty = parseFloat(currentStock.qty_available?.toString() || '0');
+          const newQty = Math.max(0, currentQty - qtyInPieces);
+
+          // Update stock
+          const { error: stockError } = await supabase
+            .from('variation_location_details')
+            .update({ qty_available: newQty.toString() })
+            .eq('variation_id', item.variationId)
+            .eq('location_id', locations.id);
+
+          if (stockError) {
+            console.error('Stock update error:', stockError);
+            // Don't throw - log but continue
+          }
+        }
+      }
+
+      // Create account transaction for the sale
+      try {
+        const { createAccountTransactionForSale } = await import('@/lib/services/accountingService');
+        await createAccountTransactionForSale(
+          profile.business_id,
+          transaction.id,
+          finalTotal,
+          paymentMethod === 'Cash' ? 'Cash' : 'Card',
+          session.user.id,
+          `POS Sale - Invoice ${invoiceNo}`
+        );
+      } catch (accountingError) {
+        console.error('Failed to create accounting entry:', accountingError);
+        // Don't fail the sale - just log the error
+      }
+
+      toast.success(`${paymentMethod} payment of ${formatCurrency(finalTotal)} processed successfully!`);
+      setCart([]);
+      setCustomerName('');
+      loadTodaysSales();
     } catch (err) {
       console.error('Payment error:', err);
       toast.error(err instanceof Error ? err.message : 'Failed to process payment');
@@ -513,9 +644,9 @@ export function ModernPOS() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-[#111827]">
+    <div className="fixed inset-0 h-screen w-screen flex flex-col bg-[#111827] z-50">
       {/* Header */}
-      <div className="bg-[#111827] border-b border-gray-800 px-6 py-4">
+      <div className="bg-[#111827] border-b border-gray-800 px-6 py-4 flex-shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button 
@@ -609,7 +740,7 @@ export function ModernPOS() {
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
                 {filteredProducts.map(variation => {
-                  const price = isWholesale ? variation.wholesale_price : variation.retail_price;
+                  const price = variation.retail_price;
                   const stock = stockMap.get(variation.id) ?? 0;
                   const enableStock = variation.product?.enable_stock ?? false;
                   const isOutOfStock = enableStock && stock <= 0;
@@ -644,12 +775,6 @@ export function ModernPOS() {
                         </div>
                       )}
                       
-                      {/* Wholesale Tag */}
-                      {isWholesale && variation.wholesale_price > 0 && (
-                        <div className="absolute top-2 left-2 bg-green-500/20 text-green-400 px-2 py-1 rounded-lg">
-                          <p className="text-xs font-medium">Wholesale</p>
-                        </div>
-                      )}
 
                       <div className="p-4">
                         {/* Product Image or Initials */}
@@ -714,7 +839,6 @@ export function ModernPOS() {
                 onClick={() => {
                   setCart([]);
                   setCustomerName('');
-                  setDiscount(0);
                 }}
               >
                 <Trash2 size={18} />
@@ -744,65 +868,8 @@ export function ModernPOS() {
             </div>
           </div>
 
-          {/* Pricing Mode Toggle */}
-          <div className="p-4 bg-[#111827] border-b border-gray-800/50">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Tag size={18} className="text-gray-400" />
-                <span className="text-sm text-gray-400">Pricing Mode</span>
-              </div>
-              <label className="flex items-center gap-3 cursor-pointer">
-                <span className={cn("text-sm font-medium transition-colors", isWholesale ? "text-green-400" : "text-gray-400")}>
-                  {isWholesale ? 'Wholesale' : 'Retail'}
-                </span>
-                <div className="relative inline-flex h-6 w-11 items-center rounded-full transition-colors">
-                  <input
-                    type="checkbox"
-                    className="sr-only"
-                    checked={isWholesale}
-                    onChange={(e) => setIsWholesale(e.target.checked)}
-                  />
-                  <span
-                    className={cn(
-                      'inline-block h-6 w-11 transform rounded-full transition-colors',
-                      isWholesale ? 'bg-green-600' : 'bg-gray-700'
-                    )}
-                  />
-                  <span
-                    className={cn(
-                      'absolute left-1 top-1 h-4 w-4 transform rounded-full bg-white transition-transform',
-                      isWholesale ? 'translate-x-5' : 'translate-x-0'
-                    )}
-                  />
-                </div>
-              </label>
-            </div>
-          </div>
-
-          {/* Discount Input */}
-          <div className="p-4 bg-[#111827] border-b border-gray-800/50">
-            <div className="flex items-center gap-3">
-              <Tag size={18} className="text-gray-400" />
-              <div className="flex-1">
-                <label className="text-xs text-gray-400 mb-1 block">Discount (%)</label>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  placeholder="0"
-                  value={discount || ''}
-                  onChange={(e) => {
-                    const value = parseFloat(e.target.value) || 0;
-                    setDiscount(Math.min(100, Math.max(0, value)));
-                  }}
-                  className="w-full bg-gray-800/50 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Cart Items */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin scrollbar-thumb-gray-800 scrollbar-track-transparent">
+          {/* Cart Items - Scrollable */}
+          <div className="flex-1 overflow-y-auto p-5 space-y-4 min-h-0 scrollbar-thin scrollbar-thumb-gray-800 scrollbar-track-transparent">
             {cart.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-gray-500 opacity-50">
                 <ShoppingCart size={64} className="mb-4 opacity-30" />
@@ -812,29 +879,106 @@ export function ModernPOS() {
             ) : (
               cart.map(item => {
                 const itemStock = stockMap.get(item.variationId) || 0;
-                const itemPrice = isWholesale ? item.wholesalePrice : item.retailPrice;
+                const unitPrice = item.editedPrice !== undefined ? item.editedPrice : item.retailPrice;
+                const itemSubtotal = unitPrice * item.quantity;
+                const itemDiscount = item.discountAmount || 0;
+                const itemTotal = itemSubtotal - itemDiscount;
+                
                 return (
                   <div
                     key={item.variationId}
-                    className="bg-gray-800/50 p-4 rounded-xl border border-gray-700"
+                    className="bg-gray-800/50 p-5 rounded-xl border border-gray-700 flex-shrink-0"
                   >
-                    <div className="flex justify-between items-start mb-2">
-                      <h4 className="text-sm font-semibold text-white">{item.name}</h4>
-                      <p className="text-sm font-bold text-blue-400">
-                        {formatCurrency(itemPrice * item.quantity)}
+                    <div className="flex justify-between items-start mb-3">
+                      <h4 className="text-base font-semibold text-white flex-1">{item.name}</h4>
+                      <p className="text-base font-bold text-blue-400 ml-3">
+                        {formatCurrency(itemTotal)}
                       </p>
                     </div>
-                    <p className="text-xs text-gray-500 mb-3">
-                      {formatCurrency(itemPrice)} x {item.quantity}
-                    </p>
-                    <div className="flex items-center gap-2">
+                    
+                    {/* Clickable Price Display/Edit */}
+                    <div className="mb-3">
+                      {editingPrice === item.variationId ? (
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          autoFocus
+                          value={unitPrice || ''}
+                          onBlur={() => setEditingPrice(null)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              setEditingPrice(null);
+                            }
+                          }}
+                          onChange={(e) => {
+                            const newPrice = parseFloat(e.target.value) || 0;
+                            setCart(prev => prev.map(cartItem => 
+                              cartItem.variationId === item.variationId
+                                ? { ...cartItem, editedPrice: newPrice }
+                                : cartItem
+                            ));
+                          }}
+                          className="w-full bg-gray-900 border border-blue-500 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                      ) : (
+                        <p 
+                          onClick={() => setEditingPrice(item.variationId)}
+                          className="text-sm text-gray-400 cursor-pointer hover:text-gray-300 transition-colors"
+                        >
+                          {formatCurrency(unitPrice)} x {item.quantity}
+                        </p>
+                      )}
+                    </div>
+                    
+                    {/* Clickable Discount Display/Edit */}
+                    <div className="mb-4">
+                      {editingDiscount === item.variationId ? (
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          autoFocus
+                          placeholder="Discount Amount"
+                          value={itemDiscount || ''}
+                          onBlur={() => setEditingDiscount(null)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              setEditingDiscount(null);
+                            }
+                          }}
+                          onChange={(e) => {
+                            const newDiscount = parseFloat(e.target.value) || 0;
+                            setCart(prev => prev.map(cartItem => 
+                              cartItem.variationId === item.variationId
+                                ? { ...cartItem, discountAmount: newDiscount }
+                                : cartItem
+                            ));
+                          }}
+                          className="w-full bg-gray-900 border border-blue-500 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                      ) : (
+                        <p 
+                          onClick={() => setEditingDiscount(item.variationId)}
+                          className={cn(
+                            "text-xs cursor-pointer transition-colors",
+                            itemDiscount > 0 
+                              ? "text-orange-400 hover:text-orange-300" 
+                              : "text-gray-500 hover:text-gray-400"
+                          )}
+                        >
+                          {itemDiscount > 0 ? `Discount: -${formatCurrency(itemDiscount)}` : 'Click to add discount'}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
                       <button
                         onClick={() => updateQuantity(item.variationId, -1)}
-                        className="p-1.5 hover:bg-gray-700 rounded text-gray-400 hover:text-white transition-colors border border-gray-700 bg-gray-900"
+                        className="p-2 hover:bg-gray-700 rounded-lg text-gray-400 hover:text-white transition-colors border border-gray-700 bg-gray-900"
                       >
-                        <Minus size={14} />
+                        <Minus size={16} />
                       </button>
-                      <span className="text-sm font-semibold w-8 text-center text-white">{item.quantity}</span>
+                      <span className="text-base font-semibold w-10 text-center text-white">{item.quantity}</span>
                       <button
                         onClick={() => {
                           if (item.quantity + 1 > itemStock) {
@@ -843,9 +987,9 @@ export function ModernPOS() {
                             updateQuantity(item.variationId, 1);
                           }
                         }}
-                        className="p-1.5 hover:bg-gray-700 rounded text-gray-400 hover:text-white transition-colors border border-gray-700 bg-blue-600 border-blue-500"
+                        className="p-2 hover:bg-gray-700 rounded-lg text-gray-400 hover:text-white transition-colors border border-gray-700 bg-blue-600 border-blue-500"
                       >
-                        <Plus size={14} />
+                        <Plus size={16} />
                       </button>
                     </div>
                   </div>
@@ -854,19 +998,17 @@ export function ModernPOS() {
             )}
           </div>
 
-          {/* Totals & Actions */}
-          <div className="p-6 bg-[#111827] border-t border-gray-800 shadow-[0_-10px_40px_rgba(0,0,0,0.3)] z-10">
+          {/* Totals & Actions - Fixed at Bottom */}
+          <div className="p-6 bg-[#111827] border-t border-gray-800 shadow-[0_-10px_40px_rgba(0,0,0,0.3)] z-10 flex-shrink-0">
             <div className="space-y-3 mb-6">
               <div className="flex justify-between text-sm text-gray-400">
                 <span>Subtotal</span>
-                <span className="text-white font-medium">{formatCurrency(subtotal)}</span>
+                <span className="text-white font-medium">{formatCurrency(subtotalBeforeDiscount)}</span>
               </div>
-              {discount > 0 && (
-                <div className="flex justify-between text-sm text-orange-400">
-                  <span>Discount ({discount}%)</span>
-                  <span className="font-medium">-{formatCurrency(discountAmount)}</span>
-                </div>
-              )}
+              <div className="flex justify-between text-sm text-orange-400">
+                <span>Discount</span>
+                <span className="font-medium">-{formatCurrency(totalDiscount)}</span>
+              </div>
               <div className="flex justify-between text-sm text-gray-400">
                 <span>Tax (10%)</span>
                 <span className="text-white font-medium">{formatCurrency(tax)}</span>

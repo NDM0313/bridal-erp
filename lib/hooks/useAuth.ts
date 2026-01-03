@@ -39,28 +39,52 @@ export function useAuth() {
   const signIn = async (email: string, password: string) => {
     // console.log('🔐 Attempting sign in...');
     
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    if (error) {
-      console.error('❌ Sign in error:', error.message);
-      throw error;
+      if (error) {
+        console.error('❌ Sign in error:', error.message);
+        // Check for network errors and provide better message
+        if (
+          error.message.includes('Failed to fetch') ||
+          error.message.includes('NetworkError') ||
+          error.message.includes('Network request failed')
+        ) {
+          const networkError = new Error('Failed to fetch: Cannot connect to Supabase. Please check your internet connection and Supabase configuration.');
+          (networkError as any).code = 'NETWORK_ERROR';
+          throw networkError;
+        }
+        throw error;
+      }
+
+      // Handle case where data might be null
+      if (!data) {
+        console.warn('⚠️ Sign in returned no data');
+        throw new Error('Sign in failed: No data returned');
+      }
+
+      // console.log('✅ Sign in successful:', {
+      //   user: data.user ? data.user.email : 'No user',
+      //   session: data.session ? 'Session created' : 'No session',
+      // });
+
+      return data;
+    } catch (err: any) {
+      // Re-throw network errors with better context
+      if (
+        err?.message?.includes('Failed to fetch') ||
+        err?.message?.includes('NetworkError') ||
+        err?.code === 'NETWORK_ERROR'
+      ) {
+        const networkError = new Error('Failed to fetch: Cannot connect to Supabase. Please check your internet connection and Supabase configuration.');
+        (networkError as any).code = 'NETWORK_ERROR';
+        throw networkError;
+      }
+      throw err;
     }
-
-    // Handle case where data might be null
-    if (!data) {
-      console.warn('⚠️ Sign in returned no data');
-      throw new Error('Sign in failed: No data returned');
-    }
-
-    // console.log('✅ Sign in successful:', {
-    //   user: data.user ? data.user.email : 'No user',
-    //   session: data.session ? 'Session created' : 'No session',
-    // });
-
-    return data;
   };
 
   const signOut = async () => {

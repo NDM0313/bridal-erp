@@ -20,8 +20,10 @@ interface RoleGuardProps {
 export function RoleGuard({ permission, children, fallback = null }: RoleGuardProps) {
   const { hasPermission, loading } = useRole();
 
+  // Show children while loading to prevent staggered rendering
+  // Permission check will hide them if needed after loading
   if (loading) {
-    return null; // Or loading spinner
+    return <>{children}</>; // Show by default while loading
   }
 
   if (!hasPermission(permission)) {

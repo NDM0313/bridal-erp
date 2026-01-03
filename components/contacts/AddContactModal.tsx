@@ -19,9 +19,11 @@ interface AddContactModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (contact: Contact) => void;
+  editContact?: Contact | null;
 }
 
-export function AddContactModal({ isOpen, onClose, onSave }: AddContactModalProps) {
+export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddContactModalProps) {
+  const isEditMode = !!editContact;
   const [contactType, setContactType] = useState<'customer' | 'supplier'>('customer');
   const [loading, setLoading] = useState(false);
   
@@ -55,59 +57,137 @@ export function AddContactModal({ isOpen, onClose, onSave }: AddContactModalProp
 
   useEffect(() => {
     if (isOpen) {
-      // Reset form when modal opens
-      setFormData({
-        business_name: '',
-        mobile: '',
-        email: '',
-        opening_balance: 0,
-        credit_limit: 0,
-        payment_terms: '',
-        tax_id: '',
-        tax_number: '',
-        tax_type: '',
-        address_line_1: '',
-        address_line_2: '',
-        city: '',
-        state: '',
-        zip_code: '',
-        country: '',
-      });
-      setContactType('customer');
+      if (editContact) {
+        // Load full contact data for editing
+        const loadContactData = async () => {
+          try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) return;
+
+            const { data: fullContact, error } = await supabase
+              .from('contacts')
+              .select('*')
+              .eq('id', editContact.id)
+              .single();
+
+            if (error) {
+              console.error('Error loading contact:', error);
+              return;
+            }
+
+            if (fullContact) {
+              setFormData({
+                business_name: fullContact.name || '',
+                mobile: fullContact.mobile || '',
+                email: fullContact.email || '',
+                opening_balance: 0,
+                credit_limit: parseFloat(fullContact.credit_limit?.toString() || '0') || 0,
+                payment_terms: fullContact.pay_term_number && fullContact.pay_term_type
+                  ? `Net ${fullContact.pay_term_number} ${fullContact.pay_term_type}`
+                  : '',
+                tax_id: '',
+                tax_number: fullContact.tax_number || '',
+                tax_type: '',
+                address_line_1: fullContact.address_line_1 || '',
+                address_line_2: fullContact.address_line_2 || '',
+                city: fullContact.city || '',
+                state: fullContact.state || '',
+                zip_code: fullContact.zip_code || '',
+                country: fullContact.country || '',
+              });
+              setContactType(fullContact.type === 'supplier' ? 'supplier' : 'customer');
+            }
+          } catch (err) {
+            console.error('Error loading contact data:', err);
+          }
+        };
+
+        loadContactData();
+      } else {
+        // Reset form when modal opens for new contact
+        setFormData({
+          business_name: '',
+          mobile: '',
+          email: '',
+          opening_balance: 0,
+          credit_limit: 0,
+          payment_terms: '',
+          tax_id: '',
+          tax_number: '',
+          tax_type: '',
+          address_line_1: '',
+          address_line_2: '',
+          city: '',
+          state: '',
+          zip_code: '',
+          country: '',
+        });
+        setContactType('customer');
+      }
+      
       setBasicInfoExpanded(true);
       setFinancialExpanded(false);
       setTaxExpanded(false);
       setBillingExpanded(false);
     }
-  }, [isOpen]);
+  }, [isOpen, editContact]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.business_name.trim() || !formData.mobile.trim()) {
-      toast.error('Business Name and Mobile Number are required');
+    // Validation
+    if (!formData.business_name.trim()) {
+      toast.error('Name is required');
+      return;
+    }
+    
+    if (!formData.mobile.trim()) {
+      toast.error('Mobile Number is required');
       return;
     }
 
     setLoading(true);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('Not authenticated');
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) {
+        console.error('Session error:', sessionError);
+        throw new Error('Authentication error: ' + sessionError.message);
+      }
+      if (!session) {
+        throw new Error('Not authenticated - please log in');
+      }
 
-      const { data: profile } = await supabase
+      console.log('User ID:', session.user.id);
+      console.log('User email:', session.user.email);
+
+      const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
         .select('business_id')
         .eq('user_id', session.user.id)
         .single();
 
-      if (!profile) throw new Error('Business not found');
+      if (profileError) {
+        console.error('Profile fetch error:', profileError);
+        throw new Error('Failed to fetch business profile: ' + profileError.message);
+      }
+      if (!profile || !profile.business_id) {
+        throw new Error('Business not found - please contact support');
+      }
+
+      console.log('Business ID:', profile.business_id);
+
+      // Ensure mobile is not empty (required field)
+      const mobileValue = formData.mobile.trim();
+      if (!mobileValue) {
+        throw new Error('Mobile number is required');
+      }
 
       const contactData: any = {
         business_id: profile.business_id,
         type: contactType,
         name: formData.business_name.trim(),
-        mobile: formData.mobile.trim(),
+        mobile: mobileValue,
         email: formData.email.trim() || null,
         address_line_1: formData.address_line_1.trim() || null,
         address_line_2: formData.address_line_2.trim() || null,
@@ -118,13 +198,86 @@ export function AddContactModal({ isOpen, onClose, onSave }: AddContactModalProp
         created_by: session.user.id,
       };
 
-      const { data: newContact, error } = await supabase
-        .from('contacts')
-        .insert(contactData)
-        .select()
-        .single();
+      // Add optional fields if provided
+      if (formData.credit_limit > 0) {
+        contactData.credit_limit = formData.credit_limit.toString();
+      }
+      if (formData.tax_number) {
+        contactData.tax_number = formData.tax_number.trim();
+      }
+      if (formData.payment_terms) {
+        // Parse payment terms (e.g., "Net 30" -> pay_term_number: 30, pay_term_type: 'days')
+        const termsMatch = formData.payment_terms.match(/(\d+)\s*(day|days|month|months)/i);
+        if (termsMatch) {
+          contactData.pay_term_number = parseInt(termsMatch[1]);
+          contactData.pay_term_type = termsMatch[2].toLowerCase().includes('month') ? 'months' : 'days';
+        }
+      }
 
-      if (error) throw error;
+      console.log('Inserting contact:', contactData);
+      console.log('Business ID:', profile.business_id);
+      console.log('User ID:', session.user.id);
+      console.log('Contact Type:', contactType);
+
+      // Verify business_id is valid
+      if (!profile.business_id || isNaN(profile.business_id)) {
+        throw new Error('Invalid business ID. Please contact support.');
+      }
+
+      // Ensure business_id is an integer
+      contactData.business_id = parseInt(profile.business_id.toString(), 10);
+
+      let newContact;
+      let error;
+
+      if (isEditMode && editContact) {
+        // Update existing contact
+        const { data, error: updateError } = await supabase
+          .from('contacts')
+          .update(contactData)
+          .eq('id', editContact.id)
+          .select()
+          .single();
+        newContact = data;
+        error = updateError;
+      } else {
+        // Insert new contact
+        const { data, error: insertError } = await supabase
+          .from('contacts')
+          .insert(contactData)
+          .select()
+          .single();
+        newContact = data;
+        error = insertError;
+      }
+
+      if (error) {
+        console.error('Contact insertion error object:', error);
+        console.error('Error code:', error.code);
+        console.error('Error message:', error.message);
+        console.error('Error details:', error.details);
+        console.error('Error hint:', error.hint);
+        console.error('Full error JSON:', JSON.stringify(error, null, 2));
+        
+        // Extract error message from various possible locations
+        let errorMsg = 'Failed to create contact';
+        if (error.message) {
+          errorMsg = error.message;
+        } else if (error.details) {
+          errorMsg = error.details;
+        } else if (error.hint) {
+          errorMsg = error.hint;
+        } else if (error.code) {
+          errorMsg = `Error code: ${error.code}`;
+        }
+        
+        // If RLS error, provide helpful message
+        if (error.code === '42501' || error.message?.includes('row-level security')) {
+          errorMsg = 'Permission denied: Row-level security policy is blocking this operation. Please run the SQL script in database/FIX_CONTACTS_RLS.sql to fix the RLS policy, or contact your administrator.';
+        }
+        
+        throw new Error(errorMsg);
+      }
 
       if (newContact) {
         const contact: Contact = {
@@ -136,11 +289,27 @@ export function AddContactModal({ isOpen, onClose, onSave }: AddContactModalProp
         };
 
         onSave(contact);
-        toast.success('Contact created successfully!');
+        toast.success(isEditMode ? 'Contact updated successfully!' : 'Contact created successfully!');
         onClose();
       }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to create contact');
+    } catch (err: any) {
+      console.error('Contact creation error:', err);
+      console.error('Error type:', typeof err);
+      console.error('Error keys:', err ? Object.keys(err) : 'no error object');
+      console.error('Full error:', JSON.stringify(err, null, 2));
+      
+      let errorMessage = 'Failed to create contact';
+      if (err?.message) {
+        errorMessage = err.message;
+      } else if (err?.error?.message) {
+        errorMessage = err.error.message;
+      } else if (typeof err === 'string') {
+        errorMessage = err;
+      } else if (err?.details) {
+        errorMessage = err.details;
+      }
+      
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -154,8 +323,8 @@ export function AddContactModal({ isOpen, onClose, onSave }: AddContactModalProp
         {/* Header */}
         <div className="sticky top-0 bg-gray-900 border-b border-gray-800 p-6 flex items-center justify-between z-10">
           <div>
-            <h2 className="text-2xl font-bold text-white">Add New Contact</h2>
-            <p className="text-sm text-gray-400 mt-1">Create a customer or supplier profile</p>
+            <h2 className="text-2xl font-bold text-white">{isEditMode ? 'Edit Contact' : 'Add New Contact'}</h2>
+            <p className="text-sm text-gray-400 mt-1">{isEditMode ? 'Update contact information' : 'Create a customer or supplier profile'}</p>
           </div>
           <button
             onClick={onClose}
@@ -423,7 +592,7 @@ export function AddContactModal({ isOpen, onClose, onSave }: AddContactModalProp
               Cancel
             </Button>
             <Button type="submit" isLoading={loading} className="bg-blue-600 hover:bg-blue-500 text-white">
-              Save Contact
+              {isEditMode ? 'Update Contact' : 'Save Contact'}
             </Button>
           </div>
         </form>

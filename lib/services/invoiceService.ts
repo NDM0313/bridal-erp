@@ -67,6 +67,16 @@ export interface InvoiceData {
     grand_total: number;
     total_items: number;
   };
+  payments?: {
+    total_paid: number;
+    credit_due: number;
+    extra_payments: number;
+    payment_details: Array<{
+      amount: number;
+      method: string;
+      date: string;
+    }>;
+  };
 }
 
 /**
@@ -104,39 +114,62 @@ export async function generateInvoice(transactionId: number): Promise<InvoiceDat
     unit: Array<{ id: number; actual_name: string }>;  // Supabase returns array
   };
 
-  // Get transaction with relations (RLS-protected)
+  // Get transaction (RLS-protected) - allow any status
   const { data: transactionData, error: transactionError } = await supabase
     .from('transactions')
-    .select(`
-      *,
-      business:businesses(id, name, tax_number_1, tax_label_1, tax_number_2, tax_label_2),
-      location:business_locations(id, name, address, city, state, country, zip_code),
-      contact:contacts(id, name, customer_type, email, mobile, address)
-    `)
+    .select('*')
     .eq('id', transactionId)
     .eq('type', 'sell')
-    .eq('status', 'final')
     .single();
 
-  if (transactionError || !transactionData) {
-    throw new Error('Transaction not found or not finalized');
+  if (transactionError) {
+    console.error('Transaction error:', transactionError);
+    throw new Error(`Transaction not found: ${transactionError.message}`);
   }
 
-  // Normalize transaction relations: convert arrays to objects
-  const transaction = transactionData as SupabaseTransactionRow;
-  const business = transaction.business && transaction.business.length > 0 ? transaction.business[0] : undefined;
-  const location = transaction.location && transaction.location.length > 0 ? transaction.location[0] : undefined;
-  const contact = transaction.contact && transaction.contact.length > 0 ? transaction.contact[0] : undefined;
+  if (!transactionData) {
+    throw new Error('Transaction not found');
+  }
 
-  // Get sell lines with product/variation details (RLS-protected)
+  // Get business details separately
+  let business;
+  if (transactionData.business_id) {
+    const { data: businessData } = await supabase
+      .from('businesses')
+      .select('id, name, tax_number_1, tax_label_1, tax_number_2, tax_label_2')
+      .eq('id', transactionData.business_id)
+      .single();
+    business = businessData || undefined;
+  }
+
+  // Get location details separately
+  let location;
+  if (transactionData.location_id) {
+    const { data: locationData } = await supabase
+      .from('business_locations')
+      .select('id, name, address, city, state, country, zip_code')
+      .eq('id', transactionData.location_id)
+      .single();
+    location = locationData || undefined;
+  }
+
+  // Get contact details separately
+  let contact;
+  if (transactionData.contact_id) {
+    const { data: contactData } = await supabase
+      .from('contacts')
+      .select('id, name, customer_type, email, mobile, address')
+      .eq('id', transactionData.contact_id)
+      .single();
+    contact = contactData || undefined;
+  }
+
+  const transaction = transactionData as any;
+
+  // Get sell lines (RLS-protected)
   const { data: sellLinesData, error: linesError } = await supabase
     .from('transaction_sell_lines')
-    .select(`
-      *,
-      product:products(id, name, sku),
-      variation:variations(id, name, sub_sku),
-      unit:units(id, actual_name)
-    `)
+    .select('*')
     .eq('transaction_id', transactionId)
     .order('id', { ascending: true });
 
@@ -144,33 +177,99 @@ export async function generateInvoice(transactionId: number): Promise<InvoiceDat
     throw new Error(`Failed to fetch sell lines: ${linesError.message}`);
   }
 
+  // Fetch product/variation/unit details separately for each line
+  const sellLines = await Promise.all((sellLinesData || []).map(async (line: any) => {
+    let product, variation, unit;
+
+    if (line.product_id) {
+      const { data: productData, error: productError } = await supabase
+        .from('products')
+        .select('id, name, sku')
+        .eq('id', line.product_id)
+        .single();
+      
+      if (productError) {
+        console.error(`Error fetching product ${line.product_id}:`, productError);
+      }
+      product = productData ? [productData] : [];
+    }
+
+    if (line.variation_id) {
+      const { data: variationData, error: variationError } = await supabase
+        .from('variations')
+        .select('id, name, sub_sku')
+        .eq('id', line.variation_id)
+        .single();
+      
+      if (variationError) {
+        console.error(`Error fetching variation ${line.variation_id}:`, variationError);
+      }
+      variation = variationData ? [variationData] : [];
+    }
+
+    if (line.unit_id) {
+      const { data: unitData, error: unitError } = await supabase
+        .from('units')
+        .select('id, actual_name')
+        .eq('id', line.unit_id)
+        .single();
+      
+      if (unitError) {
+        console.error(`Error fetching unit ${line.unit_id}:`, unitError);
+      }
+      unit = unitData ? [unitData] : [];
+    }
+
+    return {
+      ...line,
+      product: product || [],
+      variation: variation || [],
+      unit: unit || [],
+    };
+  }));
+
   // Normalize sell lines: convert arrays to objects
-  const sellLines = (sellLinesData as SupabaseSellLineRow[] || []).map(line => ({
+  const normalizedSellLines = (sellLines as SupabaseSellLineRow[] || []).map(line => ({
     ...line,
     product: line.product && line.product.length > 0 ? line.product[0] : undefined,
     variation: line.variation && line.variation.length > 0 ? line.variation[0] : undefined,
     unit: line.unit && line.unit.length > 0 ? line.unit[0] : undefined,
   }));
 
-  // Format items
-  const items = sellLines.map((line) => {
+  // Format items - use normalizedSellLines instead of sellLines
+  const items = normalizedSellLines.map((line) => {
     // Extract relations to constants for safe access
     const product = line.product;
     const variation = line.variation;
     const unit = line.unit;
     
+    // Get SKU: prefer variation SKU, fallback to product SKU
+    const variationSku = variation?.sub_sku || '';
+    const productSku = product?.sku || '';
+    const finalSku = variationSku || productSku;
+    
+    // Debug logging
+    if (!finalSku) {
+      console.warn(`No SKU found for line ${line.id}:`, {
+        product_id: line.product_id,
+        variation_id: line.variation_id,
+        product_sku: productSku,
+        variation_sku: variationSku,
+      });
+    }
+    
     return {
       id: line.id,
       product_name: product?.name || 'Unknown Product',
-      product_sku: product?.sku || '',
+      product_sku: productSku,
       variation_name: variation?.name || '',
-      variation_sku: variation?.sub_sku || '',
-      quantity: parseFloat(line.quantity || '0'),
+      variation_sku: variationSku,
+      quantity: parseFloat(line.quantity?.toString() || '0'),
       unit_name: unit?.actual_name || '',
-      unit_price: parseFloat(line.unit_price || '0'),
-      line_discount_amount: parseFloat(line.line_discount_amount || '0'),
-      item_tax: parseFloat(line.item_tax || '0'),
-      line_total: parseFloat(line.line_total || '0'),
+      unit_price: parseFloat(line.unit_price?.toString() || '0'),
+      line_discount_amount: parseFloat(line.line_discount_amount?.toString() || '0'),
+      item_tax: parseFloat(line.item_tax?.toString() || '0'),
+      line_total: parseFloat(line.line_total?.toString() || '0'),
     };
   });
 
@@ -180,6 +279,45 @@ export async function generateInvoice(transactionId: number): Promise<InvoiceDat
   const total_tax = parseFloat(transaction.tax_amount || '0');
   const grand_total = parseFloat(transaction.final_total || '0');
   const total_items = items.reduce((sum, item) => sum + item.quantity, 0);
+
+  // Fetch payment data from account_transactions
+  let payments = undefined;
+  try {
+    const { data: paymentData, error: paymentError } = await supabase
+      .from('account_transactions')
+      .select('amount, type, transaction_date, description')
+      .eq('reference_type', 'sell')
+      .eq('reference_id', transaction.id)
+      .order('transaction_date', { ascending: true });
+
+    if (!paymentError && paymentData && paymentData.length > 0) {
+      // Calculate total paid (sum of all credit transactions for this sale)
+      const total_paid = paymentData
+        .filter(p => p.type === 'credit')
+        .reduce((sum, p) => sum + parseFloat(p.amount?.toString() || '0'), 0);
+
+      const credit_due = Math.max(0, grand_total - total_paid);
+      const extra_payments = Math.max(0, total_paid - grand_total);
+
+      payments = {
+        total_paid,
+        credit_due,
+        extra_payments: extra_payments > 0 ? extra_payments : 0,
+        payment_details: paymentData
+          .filter(p => p.type === 'credit')
+          .map(p => ({
+            amount: parseFloat(p.amount?.toString() || '0'),
+            method: p.description?.includes('Cash') ? 'Cash' : 
+                   p.description?.includes('Card') ? 'Card' : 
+                   p.description?.includes('Bank') ? 'Bank Transfer' : 'Other',
+            date: p.transaction_date || '',
+          })),
+      };
+    }
+  } catch (err) {
+    console.error('Error fetching payment data:', err);
+    // Continue without payment data if fetch fails
+  }
 
   return {
     transaction: {
@@ -230,6 +368,7 @@ export async function generateInvoice(transactionId: number): Promise<InvoiceDat
       grand_total,
       total_items,
     },
+    payments,
   };
 }
 

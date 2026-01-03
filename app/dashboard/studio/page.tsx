@@ -11,7 +11,7 @@ import { ProductionOrderCard } from '@/components/studio/ProductionOrderCard';
 import { CreateOrderModal } from '@/components/studio/CreateOrderModal';
 import { ProductionOrderDetailsModal } from '@/components/studio/ProductionOrderDetailsModal';
 import { ProductionOrder } from '@/lib/types/modern-erp';
-import apiClient, { getErrorMessage, ApiResponse } from '@/lib/api/apiClient';
+import { supabase } from '@/utils/supabase/client';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Package } from 'lucide-react';
@@ -72,22 +72,44 @@ export default function StudioPage() {
     setError(null);
 
     try {
-      const response = await apiClient.get<ApiResponse<ProductionOrder[]>>(
-        '/production?per_page=100'
-      );
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error('Not authenticated');
+      }
 
-      if (response.data?.success && response.data.data) {
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('business_id')
+        .eq('user_id', session.user.id)
+        .single();
+
+      if (!profile) {
+        throw new Error('Business not found');
+      }
+
+      // Fetch production orders with customer info
+      const { data: ordersData, error: ordersError } = await supabase
+        .from('production_orders')
+        .select(`
+          *,
+          customer:contacts(id, name, mobile, email)
+        `)
+        .eq('business_id', profile.business_id)
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (ordersError) throw ordersError;
+
+      if (ordersData) {
         // Normalize Supabase relations (arrays to single objects)
-        const normalizedOrders: ProductionOrder[] = response.data.data.map((order: any) => ({
+        const normalizedOrders: ProductionOrder[] = ordersData.map((order: any) => ({
           ...order,
           customer: Array.isArray(order.customer) ? order.customer[0] : order.customer,
         }));
         setOrders(normalizedOrders);
-      } else {
-        throw new Error(response.data?.error?.message || 'Failed to load production orders');
       }
     } catch (err) {
-      const errorMessage = getErrorMessage(err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load production orders';
       setError(errorMessage);
       toast.error(`Failed to load orders: ${errorMessage}`);
     } finally {

@@ -1,24 +1,19 @@
 /**
- * POS Page - Modern Dark Theme
- * Uses ModernDashboardLayout + ModernPOS from Figma design
+ * POS Page - Full Screen (No Sidebar)
+ * Modern dark theme POS interface
  * Client component - no caching config needed (rendered on client)
  */
 
 'use client';
 
-import { ModernDashboardLayout } from '@/components/layout/ModernDashboardLayout';
 import { ModernPOS } from '@/components/dashboard/ModernPOS';
 
 /**
  * POS Page
- * Modern dark theme POS interface
+ * Full screen POS interface without sidebar
  * Integrated with Supabase and role-based access control
  */
 export default function POSPage() {
-  return (
-    <ModernDashboardLayout>
-      <ModernPOS />
-    </ModernDashboardLayout>
-  );
+  return <ModernPOS />;
 }
 

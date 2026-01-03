@@ -7,11 +7,13 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/hooks/useAuth';
 import { useRole } from '@/lib/hooks/useRole';
+import { ModalProvider } from '@/lib/context/ModalContext';
+import { GlobalModalHandler } from '@/components/modals/GlobalModalHandler';
 import {
   LayoutDashboard,
   Package,
@@ -46,6 +48,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { CreateNewButton } from '@/components/ui/CreateNewButton';
 import { cn } from '@/lib/utils';
 import { RoleGuard } from '@/components/auth/RoleGuard';
+import { NavLinkWithPrefetch } from './NavLinkWithPrefetch';
 // Note: Install framer-motion if not already installed: npm install framer-motion
 // For now, using simple CSS transitions instead
 // import { motion, AnimatePresence } from 'framer-motion';
@@ -83,10 +86,16 @@ export function ModernDashboardLayout({ children }: { children: React.ReactNode 
   const [collapsed, setCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
   const { user, signOut, loading: authLoading } = useAuth();
   const { role, loading: roleLoading } = useRole();
+
+  // Prevent hydration mismatch
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Redirect unauthenticated users
   useEffect(() => {
@@ -109,11 +118,32 @@ export function ModernDashboardLayout({ children }: { children: React.ReactNode 
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Show loading while checking auth
+  // Filter navigation based on permissions - memoized to prevent infinite loops
+  // MUST be called before any conditional returns (Rules of Hooks)
+  const filteredNavigation = useMemo(() => {
+    return navigation.filter((item) => {
+      if (!item.permission) return true;
+      // RoleGuard will handle permission check - but we show all items immediately
+      return true; // Show all items, RoleGuard will hide based on permission
+    });
+  }, []); // Empty deps - navigation array is static
+
+  // Memoized click handler for navigation items
+  // MUST be called before any conditional returns (Rules of Hooks)
+  const handleNavClick = useCallback(() => {
+    if (isMobile) setMobileMenuOpen(false);
+  }, [isMobile]);
+
+  // Show optimized loading - skeleton instead of spinner for better UX
   if (authLoading || roleLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      <div className="min-h-screen bg-slate-950">
+        <div className="flex items-center justify-center h-screen">
+          <div className="flex flex-col items-center space-y-4">
+            <div className="animate-spin rounded-full h-10 w-10 border-2 border-blue-600 border-t-transparent"></div>
+            <p className="text-slate-400 text-sm animate-pulse">Loading...</p>
+          </div>
+        </div>
       </div>
     );
   }
@@ -123,15 +153,10 @@ export function ModernDashboardLayout({ children }: { children: React.ReactNode 
     return null;
   }
 
-  // Filter navigation based on permissions
-  const filteredNavigation = navigation.filter((item) => {
-    if (!item.permission) return true;
-    // RoleGuard will handle permission check
-    return true; // Show all items, RoleGuard will hide based on permission
-  });
-
   return (
-    <div className="dark min-h-screen bg-slate-950 text-slate-100 flex overflow-hidden font-sans">
+    <ModalProvider>
+      <GlobalModalHandler />
+      <div className="dark min-h-screen bg-slate-950 text-slate-100 flex overflow-hidden font-sans">
       {/* Mobile Overlay */}
       {mobileMenuOpen && isMobile && (
         <div 
@@ -140,10 +165,10 @@ export function ModernDashboardLayout({ children }: { children: React.ReactNode 
         />
       )}
 
-      {/* Sidebar */}
+      {/* Sidebar - Fixed height to prevent CLS */}
       <aside 
         className={cn(
-          "fixed lg:static z-50 h-full bg-slate-900/80 backdrop-blur-xl border-r border-slate-800 transition-all duration-300 ease-in-out flex flex-col",
+          "fixed lg:static z-50 h-screen bg-slate-900/80 backdrop-blur-xl border-r border-slate-800 transition-all duration-300 ease-in-out flex flex-col flex-shrink-0",
           collapsed ? "w-[80px]" : "w-[280px]",
           isMobile && !mobileMenuOpen ? "-translate-x-full" : "translate-x-0"
         )}
@@ -171,8 +196,8 @@ export function ModernDashboardLayout({ children }: { children: React.ReactNode 
           )}
         </div>
 
-        {/* Sidebar Navigation */}
-        <div className="flex-1 overflow-y-auto py-4 px-3 space-y-1 scrollbar-thin scrollbar-thumb-slate-800">
+        {/* Sidebar Navigation - Render all items immediately, no conditional rendering */}
+        <div className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5 scrollbar-thin scrollbar-thumb-slate-800">
           {filteredNavigation.map((item) => {
             // Active state logic:
             // 1. Exact match: pathname === item.href
@@ -182,24 +207,19 @@ export function ModernDashboardLayout({ children }: { children: React.ReactNode 
             const isActive = 
               pathname === item.href || 
               (item.href !== '/dashboard' && pathname?.startsWith(item.href + '/'));
+
             const NavButton = (
-              <Link
+              <NavLinkWithPrefetch
                 href={item.href}
-                onClick={() => {
-                  if (isMobile) setMobileMenuOpen(false);
-                }}
-                className={cn(
-                  "w-full flex items-center p-3 rounded-xl transition-all duration-200 group relative",
-                  isActive 
-                    ? "bg-blue-600/10 text-blue-400 shadow-[0_0_20px_rgba(59,130,246,0.15)] border border-blue-500/20" 
-                    : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-100",
-                  collapsed ? "justify-center" : "justify-start"
-                )}
+                isActive={isActive}
+                collapsed={collapsed}
+                onClick={handleNavClick}
+                router={router}
               >
-                <item.icon size={22} strokeWidth={isActive ? 2.5 : 2} className={cn("transition-transform group-hover:scale-110", isActive && "text-blue-400")} />
+                <item.icon size={20} strokeWidth={isActive ? 2 : 1.5} className={cn("transition-transform group-hover:scale-110 shrink-0", isActive && "text-blue-400")} />
                 
                 {!collapsed && (
-                  <span className="ml-3 font-medium text-sm">{item.label}</span>
+                  <span className="ml-3 font-medium text-sm whitespace-nowrap">{item.label}</span>
                 )}
                 
                 {/* Tooltip for collapsed state */}
@@ -208,7 +228,7 @@ export function ModernDashboardLayout({ children }: { children: React.ReactNode 
                     {item.label}
                   </div>
                 )}
-              </Link>
+              </NavLinkWithPrefetch>
             );
 
             // Wrap with RoleGuard if permission required
@@ -260,8 +280,8 @@ export function ModernDashboardLayout({ children }: { children: React.ReactNode 
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col h-full min-w-0 bg-slate-950 relative">
-        {/* Topbar */}
-        <header className="h-16 flex items-center justify-between px-4 lg:px-8 border-b border-slate-800/50 bg-slate-900/50 backdrop-blur-md sticky top-0 z-30">
+        {/* Topbar - Fixed height to prevent CLS */}
+        <header className="h-16 flex items-center justify-between px-4 lg:px-8 border-b border-slate-800/50 bg-slate-900/50 backdrop-blur-md sticky top-0 z-30 flex-shrink-0">
           <div className="flex items-center gap-4">
             {isMobile && (
               <button 
@@ -303,14 +323,21 @@ export function ModernDashboardLayout({ children }: { children: React.ReactNode 
         {/* Scrollable Content Area */}
         <div className="flex-1 overflow-y-auto p-4 lg:p-8 scroll-smooth scrollbar-thin scrollbar-thumb-slate-800">
           <div className="max-w-7xl mx-auto h-full">
-            {/* Simple fade transition - replace with framer-motion if installed */}
-            <div className="h-full animate-in fade-in duration-200">
+            {/* Smooth fade transition - no page refresh */}
+            <div 
+              key={pathname} 
+              className="h-full animate-in fade-in duration-200"
+              style={{
+                animation: 'fadeIn 0.2s ease-out',
+              }}
+            >
               {children}
             </div>
           </div>
         </div>
       </main>
-    </div>
+      </div>
+    </ModalProvider>
   );
 }
 

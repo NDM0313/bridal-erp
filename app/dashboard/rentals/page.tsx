@@ -1,24 +1,26 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Plus, MoreVertical, Calendar, ArrowRight, Loader2, Eye, Package, CheckCircle, Printer, LayoutList } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Plus, MoreVertical, Calendar, ArrowRight, Loader2, Eye, Package, CheckCircle, Printer, LayoutList, Search, Edit, Copy, Trash2, XCircle, Share2, AlertCircle } from 'lucide-react';
 import { format, differenceInDays } from 'date-fns';
 import { ModernDashboardLayout } from '@/components/layout/ModernDashboardLayout';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { Input } from '@/components/ui/Input';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table';
 import { DropdownMenu, DropdownMenuItem } from '@/components/ui/DropdownMenu';
 import { Skeleton } from '@/components/placeholders/SkeletonLoader';
 import { EmptyState } from '@/components/placeholders/EmptyState';
 import { RentalBookingDrawer } from '@/components/rentals/RentalBookingDrawer';
 import { ReturnDressModal } from '@/components/rentals/ReturnDressModal';
-import apiClient, { getErrorMessage, ApiResponse } from '@/lib/api/apiClient';
+import { RentalCalendar } from '@/components/rentals/RentalCalendar';
+import { supabase } from '@/utils/supabase/client';
 import { RentalBooking } from '@/lib/types/modern-erp';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
-type StatusFilter = 'all' | 'reserved' | 'out' | 'returned';
+type StatusFilter = 'all' | 'reserved' | 'out' | 'returned' | 'not_returned';
 
 export default function RentalsPage() {
   const [bookings, setBookings] = useState<RentalBooking[]>([]);
@@ -28,15 +30,22 @@ export default function RentalsPage() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
   const [selectedBookingForReturn, setSelectedBookingForReturn] = useState<RentalBooking | null>(null);
+  const [selectedBookingForEdit, setSelectedBookingForEdit] = useState<RentalBooking | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
+  const [searchTerm, setSearchTerm] = useState<string>('');
   
   // Calculate stats
   const activeRentals = bookings.filter(b => b.status === 'reserved' || b.status === 'out').length;
   const today = new Date().toISOString().split('T')[0];
   const returnsDueToday = bookings.filter(b => b.status === 'out' && b.return_date === today).length;
   const overdueItems = bookings.filter(b => {
-    if (b.status === 'out' && b.return_date) {
-      return new Date(b.return_date) < new Date();
+    // Overdue: status is 'out' or 'reserved' and return_date has passed
+    if ((b.status === 'out' || b.status === 'reserved') && b.return_date) {
+      const returnDate = new Date(b.return_date);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      returnDate.setHours(0, 0, 0, 0);
+      return returnDate < today;
     }
     return false;
   }).length;
@@ -50,30 +59,60 @@ export default function RentalsPage() {
     setError(null);
 
     try {
-      const params = new URLSearchParams();
-      if (statusFilter !== 'all') {
-        params.append('status', statusFilter);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error('Not authenticated');
       }
-      params.append('per_page', '50');
 
-      const response = await apiClient.get<ApiResponse<RentalBooking[]>>(
-        `/rentals?${params.toString()}`
-      );
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('business_id')
+        .eq('user_id', session.user.id)
+        .single();
 
-      if (response.data?.success && response.data.data) {
+      if (!profile) {
+        throw new Error('Business not found');
+      }
+
+      // Build query
+      let query = supabase
+        .from('rental_bookings')
+        .select(`
+          *,
+          contact:contacts(id, name, mobile, email),
+          product:products(id, name, sku, image),
+          variation:variations(id, name, sub_sku)
+        `)
+        .eq('business_id', profile.business_id)
+        .order('pickup_date', { ascending: false })
+        .limit(50);
+
+      // Apply status filter
+      if (statusFilter !== 'all') {
+        if (statusFilter === 'not_returned') {
+          // Filter for bookings that are not returned (status !== 'returned')
+          query = query.neq('status', 'returned');
+        } else {
+          query = query.eq('status', statusFilter);
+        }
+      }
+
+      const { data: bookingsData, error: bookingsError } = await query;
+
+      if (bookingsError) throw bookingsError;
+
+      if (bookingsData) {
         // Normalize Supabase relations (arrays to single objects)
-        const normalizedBookings: RentalBooking[] = response.data.data.map((booking: any) => ({
+        const normalizedBookings: RentalBooking[] = bookingsData.map((booking: any) => ({
           ...booking,
           contact: Array.isArray(booking.contact) ? booking.contact[0] : booking.contact,
           product: Array.isArray(booking.product) ? booking.product[0] : booking.product,
           variation: Array.isArray(booking.variation) ? booking.variation[0] : booking.variation,
         }));
         setBookings(normalizedBookings);
-      } else {
-        throw new Error(response.data?.error?.message || 'Failed to load bookings');
       }
     } catch (err) {
-      const errorMessage = getErrorMessage(err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load bookings';
       setError(errorMessage);
       toast.error(`Failed to load bookings: ${errorMessage}`);
     } finally {
@@ -88,19 +127,33 @@ export default function RentalsPage() {
   // Handle status update
   const handleStatusUpdate = async (bookingId: number, newStatus: string) => {
     try {
-      const response = await apiClient.patch<ApiResponse<RentalBooking>>(
-        `/rentals/${bookingId}/status`,
-        { status: newStatus }
-      );
-
-      if (response.data?.success) {
-        toast.success('Booking status updated successfully');
-        fetchBookings(); // Refresh list
-      } else {
-        throw new Error(response.data?.error?.message || 'Failed to update status');
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error('Not authenticated');
       }
+
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('business_id')
+        .eq('user_id', session.user.id)
+        .single();
+
+      if (!profile) {
+        throw new Error('Business not found');
+      }
+
+      const { error: updateError } = await supabase
+        .from('rental_bookings')
+        .update({ status: newStatus })
+        .eq('id', bookingId)
+        .eq('business_id', profile.business_id);
+
+      if (updateError) throw updateError;
+
+      toast.success('Booking status updated successfully');
+      fetchBookings(); // Refresh list
     } catch (err) {
-      const errorMessage = getErrorMessage(err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to update status';
       toast.error(`Failed to update status: ${errorMessage}`);
     }
   };
@@ -109,6 +162,160 @@ export default function RentalsPage() {
   const handleReturn = (booking: RentalBooking) => {
     setSelectedBookingForReturn(booking);
     setIsReturnModalOpen(true);
+  };
+
+  // Handle edit
+  const handleEdit = (booking: RentalBooking) => {
+    setSelectedBookingForEdit(booking);
+    setIsDrawerOpen(true);
+  };
+
+  // Generate invoice number helper
+  const generateRentalInvoiceNumber = async (businessId: number): Promise<string> => {
+    const date = new Date();
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+
+    const { count } = await supabase
+      .from('rental_bookings')
+      .select('*', { count: 'exact', head: true })
+      .eq('business_id', businessId)
+      .gte('created_at', `${year}-${month}-01`)
+      .lt('created_at', `${year}-${String(parseInt(month) + 1).padStart(2, '0')}-01`);
+
+    const sequence = String((count || 0) + 1).padStart(4, '0');
+    return `RENT-${year}${month}-${sequence}`;
+  };
+
+  // Handle duplicate
+  const handleDuplicate = async (booking: RentalBooking) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error('Not authenticated');
+      }
+
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('business_id')
+        .eq('user_id', session.user.id)
+        .single();
+
+      if (!profile) {
+        throw new Error('Business not found');
+      }
+
+      // Generate new invoice number
+      const invoiceNumber = await generateRentalInvoiceNumber(profile.business_id);
+
+      // Create duplicate booking
+      const { data: newBooking, error: duplicateError } = await supabase
+        .from('rental_bookings')
+        .insert({
+          business_id: profile.business_id,
+          contact_id: booking.contact_id,
+          product_id: booking.product_id,
+          variation_id: booking.variation_id,
+          invoice_number: invoiceNumber,
+          pickup_date: booking.pickup_date,
+          return_date: booking.return_date,
+          rental_amount: booking.rental_amount,
+          security_deposit_amount: booking.security_deposit_amount,
+          security_type: booking.security_type,
+          security_doc_url: booking.security_doc_url,
+          notes: booking.notes,
+          status: 'reserved',
+          created_by: session.user.id,
+        })
+        .select()
+        .single();
+
+      if (duplicateError) {
+        throw new Error(duplicateError.message || 'Failed to duplicate booking');
+      }
+
+      toast.success('Booking duplicated successfully!');
+      fetchBookings();
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to duplicate booking';
+      toast.error(`Failed to duplicate booking: ${errorMessage}`);
+    }
+  };
+
+  // Handle cancel
+  const handleCancel = async (booking: RentalBooking) => {
+    if (!confirm('Are you sure you want to cancel this booking?')) {
+      return;
+    }
+
+    try {
+      await handleStatusUpdate(booking.id, 'cancelled');
+      toast.success('Booking cancelled successfully!');
+    } catch (err) {
+      toast.error('Failed to cancel booking');
+    }
+  };
+
+  // Handle delete
+  const handleDelete = async (booking: RentalBooking) => {
+    if (!confirm('Are you sure you want to delete this booking? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error('Not authenticated');
+      }
+
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('business_id')
+        .eq('user_id', session.user.id)
+        .single();
+
+      if (!profile) {
+        throw new Error('Business not found');
+      }
+
+      const { error: deleteError } = await supabase
+        .from('rental_bookings')
+        .delete()
+        .eq('id', booking.id)
+        .eq('business_id', profile.business_id);
+
+      if (deleteError) {
+        throw new Error(deleteError.message || 'Failed to delete booking');
+      }
+
+      toast.success('Booking deleted successfully!');
+      fetchBookings();
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to delete booking';
+      toast.error(`Failed to delete booking: ${errorMessage}`);
+    }
+  };
+
+  // Handle share/WhatsApp
+  const handleShare = (booking: RentalBooking) => {
+    const invoiceNumber = booking.invoice_number || `#${booking.id}`;
+    const customerName = booking.contact?.name || 'Customer';
+    const productName = booking.product?.name || 'Product';
+    const pickupDate = format(new Date(booking.pickup_date), 'MMM dd, yyyy');
+    const returnDate = format(new Date(booking.return_date), 'MMM dd, yyyy');
+    const amount = booking.rental_amount.toLocaleString();
+
+    const message = `Rental Booking Details\n\n` +
+      `Invoice: ${invoiceNumber}\n` +
+      `Customer: ${customerName}\n` +
+      `Product: ${productName}\n` +
+      `Pickup: ${pickupDate}\n` +
+      `Return: ${returnDate}\n` +
+      `Amount: Rs. ${amount}\n` +
+      `Status: ${booking.status.toUpperCase()}`;
+
+    const whatsappUrl = `https://wa.me/${booking.contact?.mobile?.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`;
+    window.open(whatsappUrl, '_blank');
   };
 
   // Get status badge variant
@@ -129,12 +336,47 @@ export default function RentalsPage() {
     );
   };
 
-  // Filter counts
+  // Filter bookings by search term
+  const filteredBookings = useMemo(() => {
+    if (!searchTerm.trim()) return bookings;
+
+    const term = searchTerm.toLowerCase().trim();
+    return bookings.filter((booking) => {
+      // Search by invoice number
+      if (booking.invoice_number?.toLowerCase().includes(term)) return true;
+      
+      // Search by booking ID
+      if (booking.id.toString().includes(term)) return true;
+      
+      // Search by customer name
+      if (booking.contact?.name?.toLowerCase().includes(term)) return true;
+      
+      // Search by customer mobile/phone
+      if (booking.contact?.mobile?.toLowerCase().includes(term)) return true;
+      
+      // Search by customer email
+      if (booking.contact?.email?.toLowerCase().includes(term)) return true;
+      
+      // Search by product name
+      if (booking.product?.name?.toLowerCase().includes(term)) return true;
+      
+      // Search by product SKU
+      if (booking.product?.sku?.toLowerCase().includes(term)) return true;
+      
+      // Search by variation SKU
+      if (booking.variation?.sub_sku?.toLowerCase().includes(term)) return true;
+      
+      return false;
+    });
+  }, [bookings, searchTerm]);
+
+  // Filter counts (based on all bookings, not filtered)
   const statusCounts = {
     all: bookings.length,
     reserved: bookings.filter((b) => b.status === 'reserved').length,
     out: bookings.filter((b) => b.status === 'out').length,
     returned: bookings.filter((b) => b.status === 'returned').length,
+    not_returned: bookings.filter((b) => b.status !== 'returned').length,
   };
 
   return (
@@ -210,36 +452,64 @@ export default function RentalsPage() {
           </div>
         )}
 
-        {/* Status Tabs */}
+        {/* Status Tabs with Search */}
         <div className="border-b border-gray-800">
-          <div className="flex gap-6">
-            {(['all', 'reserved', 'out', 'returned'] as StatusFilter[]).map((status) => (
-              <button
-                key={status}
-                onClick={() => setStatusFilter(status)}
-                className={cn(
-                  'pb-3 text-sm font-medium transition-all relative capitalize',
-                  statusFilter === status
-                    ? 'text-blue-400'
-                    : 'text-gray-400 hover:text-gray-200'
-                )}
-              >
-                {status === 'all' ? 'All' : status === 'reserved' ? 'Reserved' : status === 'out' ? 'Active' : 'Returned'}
-                {statusFilter === status && (
-                  <span className="absolute bottom-0 left-0 w-full h-0.5 bg-blue-500 rounded-full" />
-                )}
-                <span className="ml-2 text-xs text-gray-500">({statusCounts[status]})</span>
-              </button>
-            ))}
+          <div className="flex items-center justify-between gap-4">
+            {/* Status Tabs */}
+            <div className="flex gap-6">
+              {(['all', 'reserved', 'out', 'not_returned', 'returned'] as StatusFilter[]).map((status) => (
+                <button
+                  key={status}
+                  onClick={() => setStatusFilter(status)}
+                  className={cn(
+                    'pb-3 text-sm font-medium transition-all relative capitalize',
+                    statusFilter === status
+                      ? 'text-blue-400'
+                      : 'text-gray-400 hover:text-gray-200'
+                  )}
+                >
+                  {status === 'all' 
+                    ? 'All' 
+                    : status === 'reserved' 
+                    ? 'Reserved' 
+                    : status === 'out' 
+                    ? 'Active' 
+                    : status === 'not_returned'
+                    ? 'Not Returned'
+                    : 'Returned'}
+                  {statusFilter === status && (
+                    <span className="absolute bottom-0 left-0 w-full h-0.5 bg-blue-500 rounded-full" />
+                  )}
+                  <span className="ml-2 text-xs text-gray-500">({statusCounts[status]})</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Search Box - Only visible in List View */}
+            {viewMode === 'list' && (
+              <div className="relative flex-shrink-0">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
+                <Input
+                  type="text"
+                  placeholder="Search by invoice number, customer, product, or phone..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-9 pr-4 h-9 w-64 bg-gray-800 border-gray-700 text-white text-sm placeholder:text-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+            )}
           </div>
         </div>
 
         {/* Main Content - List or Calendar View */}
         {viewMode === 'calendar' ? (
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-            <p className="text-gray-400 text-center">Calendar view coming soon...</p>
-            {/* TODO: Implement RentalCalendar component */}
-          </div>
+          <RentalCalendar
+            bookings={bookings}
+            onDateClick={(date, productId) => {
+              // Open booking drawer when date/product is clicked
+              setIsDrawerOpen(true);
+            }}
+          />
         ) : loading ? (
           <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl p-6">
             <Skeleton className="h-64" />
@@ -253,13 +523,15 @@ export default function RentalsPage() {
               </Button>
             </div>
           </div>
-        ) : bookings.length === 0 ? (
+        ) : filteredBookings.length === 0 ? (
           <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl p-12">
-            <EmptyState
+              <EmptyState
               icon={Package}
-              title="No bookings found"
+              title={searchTerm ? "No bookings found" : "No bookings found"}
               description={
-                statusFilter === 'all'
+                searchTerm
+                  ? `No bookings match "${searchTerm}". Try a different search term.`
+                  : statusFilter === 'all'
                   ? 'Get started by creating your first rental booking'
                   : `No ${statusFilter} bookings found`
               }
@@ -274,7 +546,8 @@ export default function RentalsPage() {
             />
           </div>
         ) : (
-          <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl overflow-hidden">
+          <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl overflow-visible relative" style={{ isolation: 'isolate' }}>
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow className="bg-gray-900/50">
@@ -288,17 +561,31 @@ export default function RentalsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {bookings.map((booking) => {
+                {filteredBookings.map((booking) => {
                   const pickupDate = new Date(booking.pickup_date);
                   const returnDate = new Date(booking.return_date);
                   const days = differenceInDays(returnDate, pickupDate);
-                  const isOverdue = booking.status === 'out' && new Date() > returnDate;
+                  // Check if overdue: status is 'out' and return date has passed
+                  const isOverdue = (booking.status === 'out' || booking.status === 'reserved') && new Date() > returnDate;
+                  const daysOverdue = isOverdue ? differenceInDays(new Date(), returnDate) : 0;
 
                   return (
-                    <TableRow key={booking.id}>
-                      {/* Booking ID */}
+                    <TableRow 
+                      key={booking.id}
+                      className={cn(
+                        isOverdue && 'bg-red-950/20 border-l-4 border-l-red-500'
+                      )}
+                    >
+                      {/* Invoice Number */}
                       <TableCell>
-                        <span className="font-mono text-gray-400">#{booking.id}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-gray-400">
+                            {booking.invoice_number || `#${booking.id}`}
+                          </span>
+                          {isOverdue && (
+                            <AlertCircle size={14} className="text-red-400" title={`${daysOverdue} days overdue`} />
+                          )}
+                        </div>
                       </TableCell>
 
                       {/* Customer */}
@@ -355,19 +642,41 @@ export default function RentalsPage() {
                               <span className="text-white">{format(pickupDate, 'MMM dd')}</span>
                             </div>
                             <div className="flex items-center gap-1 text-xs mt-1">
-                              <ArrowRight size={12} className="text-green-400" />
+                              <ArrowRight size={12} className={isOverdue ? "text-red-400" : "text-green-400"} />
                               <span className="text-gray-400">Return:</span>
-                              <span className="text-white">{format(returnDate, 'MMM dd')}</span>
+                              <span className={cn(
+                                "text-white",
+                                isOverdue && "text-red-400 font-semibold"
+                              )}>
+                                {format(returnDate, 'MMM dd')}
+                              </span>
+                              {isOverdue && (
+                                <span className="text-red-400 font-semibold ml-1">
+                                  ({daysOverdue}d overdue)
+                                </span>
+                              )}
                             </div>
                           </div>
-                          <div className="text-xs text-gray-500 ml-2">
+                          <div className={cn(
+                            "text-xs ml-2",
+                            isOverdue ? "text-red-400 font-semibold" : "text-gray-500"
+                          )}>
                             {days}d
                           </div>
                         </div>
                       </TableCell>
 
                       {/* Status */}
-                      <TableCell>{getStatusBadge(booking.status)}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          {getStatusBadge(booking.status)}
+                          {isOverdue && (
+                            <Badge variant="outline" className="bg-red-900/20 text-red-400 border-red-900/50 text-xs">
+                              Overdue
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
 
                       {/* Amounts */}
                       <TableCell>
@@ -388,14 +697,15 @@ export default function RentalsPage() {
                       </TableCell>
 
                       {/* Actions */}
-                      <TableCell className="text-right">
-                        <DropdownMenu
-                          trigger={
-                            <button className="p-1 rounded hover:bg-gray-800 text-gray-400 hover:text-white transition-colors">
-                              <MoreVertical size={18} />
-                            </button>
-                          }
-                        >
+                      <TableCell className="text-right relative">
+                        <div className="relative inline-block">
+                          <DropdownMenu
+                            trigger={
+                              <button className="p-1 rounded hover:bg-gray-800 text-gray-400 hover:text-white transition-colors focus:outline-none focus:ring-0 active:outline-none active:ring-0">
+                                <MoreVertical size={18} />
+                              </button>
+                            }
+                          >
                           {booking.status === 'reserved' && (
                             <DropdownMenuItem
                               onClick={() => handleStatusUpdate(booking.id, 'out')}
@@ -421,6 +731,18 @@ export default function RentalsPage() {
                             </>
                           )}
                           <DropdownMenuItem
+                            onClick={() => handleEdit(booking)}
+                          >
+                            <Edit size={14} className="inline mr-2" />
+                            Edit Booking
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => handleDuplicate(booking)}
+                          >
+                            <Copy size={14} className="inline mr-2" />
+                            Duplicate
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
                             onClick={() => {
                               window.open(`/dashboard/print/rental/${booking.id}`, '_blank');
                             }}
@@ -428,26 +750,61 @@ export default function RentalsPage() {
                             <Printer size={14} className="inline mr-2" />
                             Print Receipt
                           </DropdownMenuItem>
-                          <DropdownMenuItem>
+                          {booking.contact?.mobile && (
+                            <DropdownMenuItem
+                              onClick={() => handleShare(booking)}
+                            >
+                              <Share2 size={14} className="inline mr-2" />
+                              Share via WhatsApp
+                            </DropdownMenuItem>
+                          )}
+                          {booking.status !== 'returned' && booking.status !== 'cancelled' && (
+                            <DropdownMenuItem
+                              onClick={() => handleCancel(booking)}
+                              className="text-orange-400"
+                            >
+                              <XCircle size={14} className="inline mr-2" />
+                              Cancel Booking
+                            </DropdownMenuItem>
+                          )}
+                          {booking.status === 'reserved' && (
+                            <DropdownMenuItem
+                              onClick={() => handleDelete(booking)}
+                              className="text-red-400"
+                            >
+                              <Trash2 size={14} className="inline mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem
+                            onClick={() => {
+                              // View details - could open a modal or navigate
+                              window.open(`/dashboard/print/rental/${booking.id}`, '_blank');
+                            }}
+                          >
                             <Eye size={14} className="inline mr-2" />
                             View Details
                           </DropdownMenuItem>
                         </DropdownMenu>
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
                 })}
               </TableBody>
             </Table>
+            </div>
           </div>
         )}
 
         {/* Booking Drawer */}
         <RentalBookingDrawer
           isOpen={isDrawerOpen}
+          booking={selectedBookingForEdit}
           onClose={() => {
             setIsDrawerOpen(false);
-            fetchBookings(); // Refresh after booking creation
+            setSelectedBookingForEdit(null);
+            fetchBookings(); // Refresh after booking creation/update
           }}
         />
 

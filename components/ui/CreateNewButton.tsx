@@ -9,19 +9,19 @@
 import { useState } from 'react';
 import { Plus, ShoppingBag, ShoppingCart, Package, User, ChevronDown } from 'lucide-react';
 import { Button } from './Button';
-import { useRouter } from 'next/navigation';
+import { useModal } from '@/lib/context/ModalContext';
 import { cn } from '@/lib/utils';
 
 export function CreateNewButton() {
   const [isOpen, setIsOpen] = useState(false);
-  const router = useRouter();
+  const { openModal } = useModal();
 
   const menuItems = [
     {
       label: 'New Sale',
       icon: ShoppingCart,
       onClick: () => {
-        router.push('/dashboard/sales/new');
+        openModal('newSale');
         setIsOpen(false);
       },
     },
@@ -29,7 +29,7 @@ export function CreateNewButton() {
       label: 'New Purchase',
       icon: ShoppingBag,
       onClick: () => {
-        router.push('/purchases/new');
+        openModal('newPurchase');
         setIsOpen(false);
       },
     },
@@ -37,7 +37,7 @@ export function CreateNewButton() {
       label: 'Add Product',
       icon: Package,
       onClick: () => {
-        router.push('/products/new');
+        openModal('newProduct');
         setIsOpen(false);
       },
     },
@@ -45,7 +45,7 @@ export function CreateNewButton() {
       label: 'Add User',
       icon: User,
       onClick: () => {
-        router.push('/dashboard/users/new');
+        openModal('newUser');
         setIsOpen(false);
       },
     },

@@ -115,6 +115,42 @@ BEGIN
     
     RAISE NOTICE '✅ Created user profile: user_id = %, business_id = %', v_user_id, v_business_id;
     
+    -- ============================================
+    -- CREATE DEFAULT ACCOUNTS AND WALK-IN CUSTOMER
+    -- ============================================
+    
+    -- Create Cash in Hand account (if financial_accounts table exists)
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'financial_accounts') THEN
+        -- Check if Cash in Hand already exists
+        IF NOT EXISTS (SELECT 1 FROM financial_accounts WHERE business_id = v_business_id AND name = 'Cash in Hand' AND type = 'cash') THEN
+            INSERT INTO financial_accounts (business_id, name, type, current_balance, opening_balance, is_active, created_by)
+            VALUES (v_business_id, 'Cash in Hand', 'cash', 0, 0, true, v_user_id);
+            RAISE NOTICE '✅ Created Cash in Hand account';
+        ELSE
+            RAISE NOTICE '✅ Cash in Hand account already exists';
+        END IF;
+        
+        -- Check if Bank Account already exists
+        IF NOT EXISTS (SELECT 1 FROM financial_accounts WHERE business_id = v_business_id AND name = 'Bank Account' AND type = 'bank') THEN
+            INSERT INTO financial_accounts (business_id, name, type, current_balance, opening_balance, is_active, created_by)
+            VALUES (v_business_id, 'Bank Account', 'bank', 0, 0, true, v_user_id);
+            RAISE NOTICE '✅ Created Bank Account';
+        ELSE
+            RAISE NOTICE '✅ Bank Account already exists';
+        END IF;
+    ELSE
+        RAISE NOTICE '⚠️ financial_accounts table not found. Skipping default accounts.';
+    END IF;
+    
+    -- Create Walk-in Customer contact
+    IF NOT EXISTS (SELECT 1 FROM contacts WHERE business_id = v_business_id AND name = 'Walk-in Customer' AND type = 'customer') THEN
+        INSERT INTO contacts (business_id, type, name, mobile, email, created_by)
+        VALUES (v_business_id, 'customer', 'Walk-in Customer', NULL, NULL, v_user_id);
+        RAISE NOTICE '✅ Created Walk-in Customer';
+    ELSE
+        RAISE NOTICE '✅ Walk-in Customer already exists';
+    END IF;
+    
     -- Create base unit (Pieces)
     SELECT id INTO v_unit_id FROM units WHERE business_id = v_business_id AND actual_name = 'Pieces' LIMIT 1;
     

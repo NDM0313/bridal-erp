@@ -60,6 +60,7 @@ export interface RentalBooking extends BaseEntity {
   contact_id?: number;
   product_id: number;
   variation_id?: number;
+  invoice_number?: string;
   booking_date: string;
   pickup_date: string;
   return_date: string;
