@@ -729,15 +729,6 @@ export default function SettingsPage() {
             require_purchase_approval: parsed.require_purchase_approval ?? defaultSettings.require_purchase_approval,
             // Rental Settings
             damage_assessment_required: parsed.damage_assessment_required ?? defaultSettings.damage_assessment_required,
-            // Theme & Appearance
-            primary_color: parsed.primary_color ?? defaultSettings.primary_color,
-            secondary_color: parsed.secondary_color ?? defaultSettings.secondary_color,
-            accent_color: parsed.accent_color ?? defaultSettings.accent_color,
-            dark_mode: parsed.dark_mode ?? defaultSettings.dark_mode,
-            compact_mode: parsed.compact_mode ?? defaultSettings.compact_mode,
-            sidebar_position: parsed.sidebar_position ?? defaultSettings.sidebar_position,
-            show_breadcrumbs: parsed.show_breadcrumbs ?? defaultSettings.show_breadcrumbs,
-            animations_enabled: parsed.animations_enabled ?? defaultSettings.animations_enabled,
           };
           if (parsed.business_logo_url) {
             setLogoPreview(parsed.business_logo_url);

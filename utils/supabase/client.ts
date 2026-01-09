@@ -69,6 +69,16 @@ const createTimeoutSignal = (timeoutMs: number = 60000) => {
 };
 
 // Enhanced fetch with retry logic and better error handling
+// Uses a simple debounce mechanism to avoid logging the same error multiple times
+const errorLogCache = new Set<string>();
+const clearErrorCache = () => {
+  errorLogCache.clear();
+};
+// Clear cache every 30 seconds to allow re-logging if issue persists
+if (typeof window !== 'undefined') {
+  setInterval(clearErrorCache, 30000);
+}
+
 const enhancedFetch = async (url: string, options: RequestInit = {}, retries = 3): Promise<Response> => {
   let lastError: any = null;
   
@@ -90,7 +100,7 @@ const enhancedFetch = async (url: string, options: RequestInit = {}, retries = 3
         cleanup();
         lastError = new Error(`Server error: ${response.status}`);
         if (attempt < retries) {
-          console.warn(`⚠️ Server error ${response.status}, retrying... (${attempt + 1}/${retries + 1})`);
+          // Silent retry - don't log intermediate attempts
           await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
           continue;
         }
@@ -103,14 +113,34 @@ const enhancedFetch = async (url: string, options: RequestInit = {}, retries = 3
       
       // Don't retry on last attempt
       if (attempt === retries) {
-        // Provide user-friendly error messages
+        // Create a unique key for this error type to avoid duplicate logs
+        const errorKey = `${error.name || 'unknown'}_${error.message?.substring(0, 50) || 'unknown'}`;
+        
+        // Only log if we haven't logged this exact error recently
+        if (!errorLogCache.has(errorKey)) {
+          errorLogCache.add(errorKey);
+          
+          // Provide user-friendly error messages (only once per error type)
+          if (error.name === 'AbortError') {
+            console.error('⏱️ Request timeout after 60s');
+            console.error('💡 This might indicate:');
+            console.error('   1. Slow internet connection');
+            console.error('   2. Supabase service is slow or overloaded');
+            console.error('   3. Network connectivity issues');
+          } else if (error.message === 'Failed to fetch' || error.message?.includes('fetch') || error.message?.includes('network')) {
+            console.error('🌐 Network error:', error.message);
+            console.error('💡 Possible causes:');
+            console.error('   1. No internet connection');
+            console.error('   2. Supabase project paused/not accessible');
+            console.error('   3. Incorrect SUPABASE_URL in .env.local');
+            console.error('   4. Firewall blocking connection');
+          } else {
+            console.error('❌ Request failed:', error.message);
+          }
+        }
+        
+        // Return graceful error responses
         if (error.name === 'AbortError') {
-          console.error('⏱️ Request timeout after 60s');
-          console.error('💡 This might indicate:');
-          console.error('   1. Slow internet connection');
-          console.error('   2. Supabase service is slow or overloaded');
-          console.error('   3. Network connectivity issues');
-          // Return a graceful error response instead of throwing
           return new Response(JSON.stringify({ 
             error: 'timeout',
             message: 'Connection timed out. Please check your internet connection and try again.' 
@@ -121,13 +151,6 @@ const enhancedFetch = async (url: string, options: RequestInit = {}, retries = 3
         }
         
         if (error.message === 'Failed to fetch' || error.message?.includes('fetch') || error.message?.includes('network')) {
-          console.error('🌐 Network error:', error.message);
-          console.error('💡 Possible causes:');
-          console.error('   1. No internet connection');
-          console.error('   2. Supabase project paused/not accessible');
-          console.error('   3. Incorrect SUPABASE_URL in .env.local');
-          console.error('   4. Firewall blocking connection');
-          // Return graceful error response for offline mode
           return new Response(JSON.stringify({ 
             error: 'offline',
             message: 'Unable to connect to server. Please check your internet connection.' 
@@ -137,8 +160,6 @@ const enhancedFetch = async (url: string, options: RequestInit = {}, retries = 3
           });
         }
         
-        // For other errors, return a generic error response
-        console.error('❌ Request failed:', error.message);
         return new Response(JSON.stringify({ 
           error: 'request_failed',
           message: error.message || 'Request failed. Please try again.' 
@@ -148,9 +169,8 @@ const enhancedFetch = async (url: string, options: RequestInit = {}, retries = 3
         });
       }
       
-      // Wait before retry (exponential backoff: 1s, 2s, 4s)
+      // Wait before retry (exponential backoff: 1s, 2s, 4s) - silent retry
       const delay = 1000 * Math.pow(2, attempt);
-      console.warn(`⚠️ Request failed (attempt ${attempt + 1}/${retries + 1}), retrying in ${delay/1000}s...`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }

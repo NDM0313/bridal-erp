@@ -19,6 +19,7 @@ interface Sale {
   location_id?: number;
   branch_name?: string;
   branch_code?: string;
+  requires_production?: boolean;
 }
 
 interface SalesQueryResult {
@@ -153,6 +154,34 @@ export function useSales() {
         }
       }
 
+      // Check which sales have studio/production products
+      const productionMap = new Map<number, boolean>();
+      if (transactionIds.length > 0) {
+        const { data: sellLines } = await supabase
+          .from('transaction_sell_lines')
+          .select('transaction_id, product_id')
+          .in('transaction_id', transactionIds);
+
+        if (sellLines && sellLines.length > 0) {
+          const productIds = [...new Set(sellLines.map(line => line.product_id))];
+          const { data: products } = await supabase
+            .from('products')
+            .select('id, requires_production')
+            .in('id', productIds);
+
+          const productionProducts = new Set(
+            (products || []).filter(p => p.requires_production).map(p => p.id)
+          );
+
+          // Mark transactions that have production products
+          sellLines.forEach(line => {
+            if (productionProducts.has(line.product_id)) {
+              productionMap.set(line.transaction_id, true);
+            }
+          });
+        }
+      }
+
       // Combine data
       const sales: Sale[] = (transactions || []).map(t => {
         const contact = t.contact_id ? contactsMap.get(t.contact_id) : null;
@@ -173,6 +202,7 @@ export function useSales() {
           location_id: t.location_id,
           branch_name: location?.name,
           branch_code: location?.code,
+          requires_production: productionMap.get(t.id) || false,
         };
       });
 

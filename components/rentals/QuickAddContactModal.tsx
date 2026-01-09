@@ -25,6 +25,7 @@ interface QuickAddContactModalProps {
   initialName?: string;
   contactType?: 'customer' | 'supplier';
   defaultType?: 'customer' | 'vendor';
+  isWorker?: boolean; // Flag to differentiate workers from vendors
 }
 
 export const QuickAddContactModal = ({
@@ -34,16 +35,18 @@ export const QuickAddContactModal = ({
   initialName = '',
   contactType,
   defaultType = 'customer',
+  isWorker = false,
 }: QuickAddContactModalProps) => {
   const [name, setName] = useState(initialName);
   const [mobile, setMobile] = useState('');
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState(''); // For vendor role/tag (Dyer, Tailor, Master)
+  const [role, setRole] = useState(''); // For vendor/worker role/tag (Dyer, Tailor, Master)
   const [isLoading, setIsLoading] = useState(false);
 
   // Determine the actual contact type to use
-  const actualContactType = contactType || (defaultType === 'vendor' ? 'supplier' : 'customer');
-  const isVendor = defaultType === 'vendor' || actualContactType === 'supplier';
+  const actualContactType = contactType || (defaultType === 'vendor' || isWorker ? 'supplier' : 'customer');
+  const isVendor = defaultType === 'vendor' || actualContactType === 'supplier' || isWorker;
+  const entityType = isWorker ? 'Worker' : (defaultType === 'vendor' ? 'Vendor' : 'Customer');
 
   useEffect(() => {
     if (isOpen) {
@@ -91,10 +94,10 @@ export const QuickAddContactModal = ({
         created_by: session.user.id,
       };
 
-      // If vendor and role is provided, store in address_line_1 or use a custom field
-      // For now, we'll use address_line_1 as a simple storage for role/tag
+      // Store role/specialization in address_line_1
+      // Use "Worker:" prefix for workers, "Role:" prefix for vendors
       if (isVendor && role.trim()) {
-        contactData.address_line_1 = `Role: ${role.trim()}`;
+        contactData.address_line_1 = isWorker ? `Worker: ${role.trim()}` : `Role: ${role.trim()}`;
       }
 
       // Create contact in Supabase
@@ -116,7 +119,7 @@ export const QuickAddContactModal = ({
         };
 
         onSave(contact);
-        toast.success(`${isVendor ? 'Vendor' : 'Customer'} created successfully!`);
+        toast.success(`${entityType} created successfully!`);
         onClose();
       }
     } catch (error) {
@@ -137,7 +140,7 @@ export const QuickAddContactModal = ({
           <div className="flex items-center gap-2">
             <Plus size={18} className="text-blue-400" />
             <h3 className="text-lg font-bold text-white">
-              Quick Add {isVendor ? 'Vendor' : 'Customer'}
+              Quick Add {entityType}
             </h3>
           </div>
           <Button variant="ghost" size="sm" onClick={onClose} className="text-gray-400 hover:text-white">
@@ -179,17 +182,19 @@ export const QuickAddContactModal = ({
             />
           </div>
 
-          {/* Role/Tag field for vendors */}
+          {/* Role/Specialization field for vendors/workers */}
           {isVendor && (
             <div className="space-y-2">
-              <Label className="text-gray-400 text-sm">Role / Tag</Label>
+              <Label className="text-gray-400 text-sm">{isWorker ? 'Specialization' : 'Role / Tag'}</Label>
               <Input
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
-                placeholder="e.g., Dyer, Tailor, Master"
+                placeholder={isWorker ? 'e.g., Dyeing, Stitching, Handwork' : 'e.g., Dyer, Tailor, Master'}
                 className="bg-gray-800 border-gray-700 text-white"
               />
-              <p className="text-xs text-gray-500">Optional: Specify vendor role (Dyer, Tailor, Master, etc.)</p>
+              <p className="text-xs text-gray-500">
+                Optional: Specify {isWorker ? 'worker specialization' : 'vendor role'} (Dyer, Tailor, Handwork, etc.)
+              </p>
             </div>
           )}
         </div>
@@ -213,7 +218,7 @@ export const QuickAddContactModal = ({
             ) : (
               <>
                 <Plus size={16} className="mr-2" />
-                Create {isVendor ? 'Vendor' : 'Customer'}
+                Create {entityType}
               </>
             )}
           </Button>

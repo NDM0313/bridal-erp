@@ -10,8 +10,6 @@ import { Badge } from '@/components/ui/Badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table';
 import { Skeleton } from '@/components/placeholders/SkeletonLoader';
 import { EmptyState } from '@/components/placeholders/EmptyState';
-import { ProductionOrderCard } from '@/components/studio/ProductionOrderCard';
-import { ProductionOrderDetailsModal } from '@/components/studio/ProductionOrderDetailsModal';
 import { ProductionOrder } from '@/lib/types/modern-erp';
 import apiClient, { getErrorMessage, ApiResponse } from '@/lib/api/apiClient';
 import { supabase } from '@/utils/supabase/client';
@@ -39,8 +37,6 @@ export default function VendorDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('active');
-  const [selectedOrder, setSelectedOrder] = useState<ProductionOrder | null>(null);
-  const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
 
   // Fetch vendor details
   const fetchVendor = async () => {
@@ -153,8 +149,8 @@ export default function VendorDetailPage() {
 
   // Handle order card click
   const handleOrderClick = (order: ProductionOrder) => {
-    setSelectedOrder(order);
-    setIsDetailsModalOpen(true);
+    // TODO: Navigate to production order details page
+    console.log('View order:', order);
   };
 
   // Get status badge
@@ -334,11 +330,14 @@ export default function VendorDetailPage() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {activeOrders.map((order) => (
-                    <ProductionOrderCard
+                    <div
                       key={order.id}
-                      order={order}
                       onClick={() => handleOrderClick(order)}
-                    />
+                      className="bg-gray-900/50 border border-gray-800 rounded-lg p-4 cursor-pointer hover:border-indigo-500 transition-all"
+                    >
+                      <h3 className="text-white font-semibold">{order.order_no}</h3>
+                      {getStatusBadge(order.status)}
+                    </div>
                   ))}
                 </div>
               )
@@ -412,18 +411,7 @@ export default function VendorDetailPage() {
           </div>
         </div>
 
-        {/* Order Details Modal */}
-        <ProductionOrderDetailsModal
-          isOpen={isDetailsModalOpen}
-          onClose={() => {
-            setIsDetailsModalOpen(false);
-            setSelectedOrder(null);
-          }}
-          order={selectedOrder}
-          onUpdate={() => {
-            fetchOrders(); // Refresh orders after status update
-          }}
-        />
+        {/* TODO: Add production order details modal */}
       </div>
     </ModernDashboardLayout>
   );

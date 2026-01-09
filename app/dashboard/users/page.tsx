@@ -132,11 +132,11 @@ function UsersPageContent() {
       const enrichedProfiles: UserProfile[] = await Promise.all(
         (profiles || []).map(async (p) => {
           // If this is the current user, we have their email
-          if (p.user_id === currentUser?.id) {
+          if (currentUser && p.user_id === currentUser.id) {
             return {
               ...p,
-              email: currentUser.email,
-              full_name: currentUser.user_metadata?.full_name || currentUser.email,
+              email: currentUser.email || '',
+              full_name: currentUser.user_metadata?.full_name || currentUser.email || '',
               avatar_url: currentUser.user_metadata?.avatar_url,
               last_login: currentUser.last_sign_in_at
             };
@@ -386,17 +386,17 @@ function UsersPageContent() {
             </div>
 
             {/* Role Filter Dropdown */}
-            <Select
+            <select
               value={roleFilter}
               onChange={(e) => setRoleFilter(e.target.value)}
-              className="w-full md:w-48 bg-slate-800 border-slate-700 text-white"
+              className="w-full md:w-48 bg-slate-800 border-slate-700 text-white rounded-lg px-3 py-2"
             >
               <option value="all">All Roles</option>
               <option value="admin">Admin</option>
               <option value="manager">Manager</option>
               <option value="sales_staff">Sales Staff</option>
               <option value="salesman">Salesman</option>
-            </Select>
+            </select>
           </div>
 
           {/* Users Table */}
@@ -413,19 +413,13 @@ function UsersPageContent() {
               description={searchTerm || roleFilter !== 'all' 
                 ? "Try adjusting your search or filters" 
                 : "Get started by adding your first user"}
-              action={
-                <Button
-                  variant="primary"
-                  onClick={() => {
-                    setEditingUser(null);
-                    setIsFormOpen(true);
-                  }}
-                  className="bg-indigo-600 hover:bg-indigo-500"
-                >
-                  <Plus size={18} className="mr-2" />
-                  Add First User
-                </Button>
-              }
+              action={{
+                label: 'Add First User',
+                onClick: () => {
+                  setEditingUser(null);
+                  setIsFormOpen(true);
+                }
+              }}
             />
           ) : (
             <div className="bg-slate-800/50 border border-slate-700 rounded-lg overflow-hidden">

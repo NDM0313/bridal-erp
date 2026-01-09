@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Search, Plus, Minus, Trash2, ShoppingBag, Calendar, HelpCircle, Pencil, UserPlus, User, FileText, DollarSign, ArrowDown, Save, Printer, Check, Package, PlusCircle, Truck, Paperclip, Banknote, Loader2 } from 'lucide-react';
+import { X, Search, Plus, Minus, Trash2, ShoppingBag, Calendar, HelpCircle, Pencil, UserPlus, User, FileText, DollarSign, ArrowDown, Save, Printer, Check, PlusCircle, Truck, Paperclip, Banknote, Loader2, Package } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
@@ -25,6 +25,7 @@ import { PackingEntry, PackingEntryData } from '@/components/purchases/PackingOv
 import { ProductSearchPortal } from '@/components/inventory/ProductSearchPortal';
 import { isDemoMode } from '@/lib/config/demoConfig';
 import { useBranchV2 } from '@/lib/context/BranchContextV2';
+import { useRole } from '@/lib/hooks/useRole';
 
 interface SaleItem {
   id: string;
@@ -42,6 +43,7 @@ interface SaleItem {
   variation_name?: string;
   variation_sku?: string; // Variation's sub_sku
   variation_stock?: number; // Variation's stock level
+  requires_production?: boolean;
 }
 
 interface AdditionalService {
@@ -73,16 +75,20 @@ export function AddSaleModal({ isOpen, onClose, onSuccess, editSaleId }: AddSale
   const [refNumber, setRefNumber] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState(''); // Will be auto-generated on submit
   const [salesman, setSalesman] = useState<string>('');
+  const [sendToStudio, setSendToStudio] = useState(false); // hidden toggle (auto-enabled by products)
+  const [saleType, setSaleType] = useState<'Regular' | 'Studio'>('Regular'); // UI-only dropdown
   const [branchId, setBranchId] = useState<number | null>(null);
   
   // Get active branch from context
-  const { activeBranch } = useBranchV2();
+  const { activeBranch, branches } = useBranchV2();
+  const { role, isAdmin } = useRole();
+  
   const [items, setItems] = useState<SaleItem[]>([]);
   const [services, setServices] = useState<AdditionalService[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [customers, setCustomers] = useState<Array<{ id: number; name: string }>>([]);
   const [salesmen, setSalesmen] = useState<Array<{ id: number; name: string }>>([]);
-  const [products, setProducts] = useState<Array<{ id: number; name: string; sku: string; stock: number }>>([]);
+  const [products, setProducts] = useState<Array<{ id: number; name: string; sku: string; stock: number; requires_production?: boolean }>>([]);
   const [customerSearchTerm, setCustomerSearchTerm] = useState('Walk-in Customer');
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const [filteredCustomers, setFilteredCustomers] = useState<Array<{ id: number; name: string }>>([]);
@@ -147,6 +153,13 @@ export function AddSaleModal({ isOpen, onClose, onSuccess, editSaleId }: AddSale
     }
   }, [isOpen, activeBranch, editSaleId]);
 
+  // Auto-enable Studio toggle if any item requires production
+  useEffect(() => {
+    if (items.some((i) => i.requires_production)) {
+      setSendToStudio(true);
+    }
+  }, [items]);
+
   // Optimized: Load data in parallel, non-blocking - modal opens immediately
   useEffect(() => {
     if (isOpen) {
@@ -178,6 +191,7 @@ export function AddSaleModal({ isOpen, onClose, onSuccess, editSaleId }: AddSale
     setRefNumber('');
     setInvoiceNumber('');
     setSalesman('');
+    setSendToStudio(false);
     setItems([]);
     setServices([]);
     setPayments([]);
@@ -665,7 +679,7 @@ export function AddSaleModal({ isOpen, onClose, onSuccess, editSaleId }: AddSale
 
       const { data, error } = await supabase
         .from('products')
-        .select('id, name, sku')
+        .select('id, name, sku, requires_production')
         .eq('business_id', profile.business_id)
         .order('name')
         .limit(100);
@@ -677,7 +691,13 @@ export function AddSaleModal({ isOpen, onClose, onSuccess, editSaleId }: AddSale
       }
 
       if (data) {
-        setProducts(data.map((p) => ({ id: p.id, name: p.name, sku: p.sku || '', stock: 0 })));
+        setProducts(data.map((p) => ({
+          id: p.id,
+          name: p.name,
+          sku: p.sku || '',
+          stock: 0,
+          requires_production: p.requires_production,
+        })));
       }
     } catch (err) {
       console.error('Failed to load products:', err);
@@ -981,6 +1001,8 @@ export function AddSaleModal({ isOpen, onClose, onSuccess, editSaleId }: AddSale
       variation_name: variationData?.variation_name,
       variation_sku: variationData?.variation_sku,
       variation_stock: variationData?.variation_stock,
+      // track production requirement
+      requires_production: productToAdd.requires_production,
     };
     
     console.log('DEBUG: New item created', newItem);
@@ -992,6 +1014,9 @@ export function AddSaleModal({ isOpen, onClose, onSuccess, editSaleId }: AddSale
       setItems(prev => {
         const updated = [...prev, newItem];
         console.log('DEBUG: Items after add', updated.length, updated);
+        if (productToAdd.requires_production) {
+          setSendToStudio(true);
+        }
         return updated;
       });
     }, 0);
@@ -1766,12 +1791,11 @@ export function AddSaleModal({ isOpen, onClose, onSuccess, editSaleId }: AddSale
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-[#0B0F1A]">
-              {/* Top Fields - CUSTOMER, DATE, BILL NO., INV NO., SALESMAN, BRANCH */}
-              <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-                <div>
-                  <Label className="text-gray-400 text-xs mb-2 uppercase">
-                    CUSTOMER
-                  </Label>
+              {/* Header Row - Strict Sequence: Customer → Date → Bill No → Invoice No → Salesman → Sale Type → Branch */}
+              <div className="flex items-start justify-between gap-4 w-full flex-wrap">
+                {/* 1. Customer Selection */}
+                <div className="flex-1 min-w-[140px]">
+                  <Label className="text-gray-400 text-xs mb-2 uppercase block">CUSTOMER</Label>
                   <div className="relative">
                     <Input
                       type="text"
@@ -1791,7 +1815,6 @@ export function AddSaleModal({ isOpen, onClose, onSuccess, editSaleId }: AddSale
                           setCustomerSearchTerm('');
                           setFilteredCustomers([]);
                         } else {
-                          // Only show filtered results when typing
                           if (customerSearchTerm && customerSearchTerm !== 'Walk-in Customer') {
                             const term = customerSearchTerm.toLowerCase();
                             const filtered = customers.filter((c) => c.name.toLowerCase().includes(term));
@@ -1804,7 +1827,6 @@ export function AddSaleModal({ isOpen, onClose, onSuccess, editSaleId }: AddSale
                       }}
                       onBlur={() => setTimeout(() => {
                         setShowCustomerDropdown(false);
-                        // Reset to Walk-in if empty
                         if (!customerSearchTerm || customerSearchTerm.trim() === '') {
                           setCustomer('walkin');
                           setCustomerSearchTerm('Walk-in Customer');
@@ -1829,7 +1851,6 @@ export function AddSaleModal({ isOpen, onClose, onSuccess, editSaleId }: AddSale
                             setCustomerSearchTerm(selected.name);
                             setShowCustomerDropdown(false);
                             setSelectedCustomerIndex(-1);
-                            // Focus on next field (DATE)
                             setTimeout(() => {
                               const dateInput = document.querySelector('input[type="date"]') as HTMLInputElement;
                               dateInput?.focus();
@@ -1852,7 +1873,7 @@ export function AddSaleModal({ isOpen, onClose, onSuccess, editSaleId }: AddSale
                         }
                       }}
                       placeholder="Select Customer"
-                      className="bg-[#111827] border-gray-800 text-white h-10"
+                      className="bg-[#111827] border-gray-800 text-white h-10 transition-all duration-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                     />
                     {showCustomerDropdown && filteredCustomers.length > 0 && (
                       <div className="absolute z-50 w-full mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-xl max-h-60 overflow-y-auto">
@@ -1892,10 +1913,9 @@ export function AddSaleModal({ isOpen, onClose, onSuccess, editSaleId }: AddSale
                   </div>
                 </div>
 
-                <div>
-                  <Label className="text-gray-400 text-xs mb-2 uppercase">
-                    DATE
-                  </Label>
+                {/* 2. Date Picker */}
+                <div className="flex-1 min-w-[140px]">
+                  <Label className="text-gray-400 text-xs mb-2 uppercase block">DATE</Label>
                   <Input
                     type="date"
                     value={date}
@@ -1908,14 +1928,13 @@ export function AddSaleModal({ isOpen, onClose, onSuccess, editSaleId }: AddSale
                         billInput?.select();
                       }
                     }}
-                    className="bg-[#111827] border-gray-800 text-white h-10"
+                    className="bg-[#111827] border-gray-800 text-white h-10 transition-all duration-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                   />
                 </div>
 
-                <div>
-                  <Label className="text-gray-400 text-xs mb-2 uppercase">
-                    Bill No.
-                  </Label>
+                {/* 3. Bill No */}
+                <div className="flex-1 min-w-[140px]">
+                  <Label className="text-gray-400 text-xs mb-2 uppercase block">Bill No.</Label>
                   <Input
                     type="text"
                     value={refNumber}
@@ -1923,68 +1942,109 @@ export function AddSaleModal({ isOpen, onClose, onSuccess, editSaleId }: AddSale
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === 'Tab') {
                         e.preventDefault();
-                          const salesmanSelect = document.querySelector('select[value=""]') as HTMLSelectElement;
-                          salesmanSelect?.focus();
+                        const invInput = document.querySelector('input[placeholder*="Auto-generated"]') as HTMLInputElement;
+                        invInput?.focus();
                       }
                     }}
                     placeholder="Enter bill number"
-                    className="bg-[#111827] border-gray-800 text-white h-10"
+                    className="bg-[#111827] border-gray-800 text-white h-10 transition-all duration-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                   />
                 </div>
 
-                <div>
-                  <Label className="text-gray-400 text-xs mb-2 uppercase">
-                    Inv No.
-                  </Label>
+                {/* 4. Invoice No */}
+                <div className="flex-1 min-w-[140px]">
+                  <Label className="text-gray-400 text-xs mb-2 uppercase block">Inv No.</Label>
                   <Input
                     type="text"
                     value={invoiceNumber || ''}
                     disabled
                     readOnly
                     placeholder="Auto-generated"
-                    className="bg-[#111827] border-gray-800 text-gray-500 h-10 cursor-not-allowed"
+                    className="bg-[#111827] border-gray-800 text-gray-500 h-10 cursor-not-allowed transition-all duration-300"
                     title="Auto-generated invoice number (read-only)"
                   />
                 </div>
 
-                <div>
-                  <Label className="text-gray-400 text-xs mb-2 uppercase">
-                    SALESMAN
-                  </Label>
-                  <select
-                    value={salesman}
-                    onChange={(e) => setSalesman(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === 'Tab') {
-                        e.preventDefault();
-                        const productSearch = document.querySelector('input[placeholder*="product name"]') as HTMLInputElement;
-                        productSearch?.focus();
-                      }
-                    }}
-                    className="w-full bg-[#111827] border border-gray-800 rounded-lg px-4 py-2.5 text-white h-10"
+                {/* 5. Salesman Selection */}
+                <div className="flex-1 min-w-[140px]">
+                  <Label className="text-gray-400 text-xs mb-2 uppercase block">SALESMAN</Label>
+                  <Select
+                    value={salesman || undefined}
+                    onValueChange={(value) => setSalesman(value === 'none' ? '' : value)}
                   >
-                    <option value="">No Salesman</option>
-                    {salesmen.map((s) => (
-                      <option key={s.id} value={s.id.toString()}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger className="w-full bg-[#111827] border-gray-800 text-white h-10 transition-all duration-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20">
+                      <SelectValue placeholder="No Salesman" />
+                    </SelectTrigger>
+                    <SelectContent className="z-[9999] bg-gray-800 border-gray-700">
+                      <SelectItem value="none">No Salesman</SelectItem>
+                      {salesmen.map((s) => (
+                        <SelectItem key={s.id} value={s.id.toString()}>
+                          {s.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
-                {/* BRANCH - Read-only label (Phase 2 Option A) */}
-                <div>
-                  <Label className="text-gray-400 text-xs mb-2 uppercase">
-                    BRANCH
-                  </Label>
-                  <div className="flex items-center gap-2 bg-[#111827] border border-gray-800 rounded-lg px-4 py-2.5 h-10">
-                    <span className="text-white text-sm font-medium">
-                      {activeBranch && activeBranch.id !== 'ALL' 
-                        ? `${activeBranch.name}${activeBranch.code ? ` (${activeBranch.code})` : ''}`
-                        : 'No Branch Selected'}
-                    </span>
-                    <span className="text-gray-500 text-xs">🔒</span>
-                  </div>
+                {/* 6. Sale Type (UI-only dropdown) */}
+                <div className="flex-1 min-w-[140px]">
+                  <Label className="text-gray-400 text-xs mb-2 uppercase block">TYPE</Label>
+                  <Select
+                    value={saleType}
+                    onValueChange={(value) => setSaleType(value as 'Regular' | 'Studio')}
+                  >
+                    <SelectTrigger 
+                      className={cn(
+                        "w-full h-10 transition-all duration-300",
+                        saleType === 'Studio'
+                          ? "bg-indigo-900/40 border-indigo-500/60 text-indigo-100 focus:ring-indigo-500/20"
+                          : "bg-[#111827] border-gray-800 text-gray-200 focus:ring-indigo-500/20"
+                      )}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="z-[9999] bg-gray-800 border-gray-700">
+                      <SelectItem value="Regular">Regular</SelectItem>
+                      <SelectItem value="Studio">Studio</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-gray-500 mt-1">UI-only; does not alter sale logic.</p>
+                </div>
+
+                {/* 7. Branch (Option A Logic: Admin editable, Salesman read-only) */}
+                <div className="flex-1 min-w-[140px]" data-branch-field>
+                  <Label className="text-gray-400 text-xs mb-2 uppercase block">BRANCH</Label>
+                  {isAdmin ? (
+                    <Select
+                      value={activeBranch?.id !== 'ALL' && activeBranch?.id ? String(activeBranch.id) : undefined}
+                      onValueChange={(value) => {
+                        const branchId = value ? Number(value) : null;
+                        if (branchId && branches.find(b => b.id === branchId)) {
+                          setBranchId(branchId);
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="w-full bg-[#111827] border-gray-800 text-white h-10 transition-all duration-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20">
+                        <SelectValue placeholder="Select Branch" />
+                      </SelectTrigger>
+                      <SelectContent className="z-[9999] bg-gray-800 border-gray-700">
+                        {branches.filter(b => b.id !== 'ALL').map((branch) => (
+                          <SelectItem key={branch.id} value={String(branch.id)}>
+                            {branch.name}{branch.code ? ` (${branch.code})` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="flex items-center gap-2 bg-[#111827] border border-gray-800 rounded-lg px-4 py-2.5 h-10">
+                      <span className="text-white text-sm font-medium">
+                        {activeBranch && activeBranch.id !== 'ALL' 
+                          ? `${activeBranch.name}${activeBranch.code ? ` (${activeBranch.code})` : ''}`
+                          : 'No Branch Selected'}
+                      </span>
+                      <span className="text-gray-500 text-xs">🔒</span>
+                    </div>
+                  )}
                   {(!activeBranch || activeBranch.id === 'ALL') && (
                     <p className="text-xs text-red-400 mt-1">Please select a specific branch</p>
                   )}

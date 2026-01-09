@@ -777,21 +777,21 @@ export default function FinancePage() {
                   <TableHeader>
                     <TableRow className="bg-slate-800/50">
                       <SortableTableHeader
-                        columnKey="id"
+                        sortKey="id"
                         label="ID"
                         currentSort={sortConfig}
                         onSort={handleSort}
                         className="text-xs font-semibold text-slate-400 uppercase tracking-wider px-4 py-3"
                       />
                       <SortableTableHeader
-                        columnKey="transaction_date"
+                        sortKey="transaction_date"
                         label="DATE"
                         currentSort={sortConfig}
                         onSort={handleSort}
                         className="text-xs font-semibold text-slate-400 uppercase tracking-wider px-4 py-3"
                       />
                       <SortableTableHeader
-                        columnKey="description"
+                        sortKey="description"
                         label="CATEGORY"
                         currentSort={sortConfig}
                         onSort={handleSort}
@@ -800,7 +800,7 @@ export default function FinancePage() {
                       <TableHead className="text-xs font-semibold text-slate-400 uppercase tracking-wider px-4 py-3">METHOD</TableHead>
                       <TableHead className="text-xs font-semibold text-slate-400 uppercase tracking-wider px-4 py-3 text-center">STATUS</TableHead>
                       <SortableTableHeader
-                        columnKey="amount"
+                        sortKey="amount"
                         label="AMOUNT"
                         currentSort={sortConfig}
                         onSort={handleSort}
@@ -882,14 +882,14 @@ export default function FinancePage() {
                 <TableHeader>
                   <TableRow className="bg-slate-800/50">
                     <SortableTableHeader
-                      columnKey="name"
+                      sortKey="name"
                       label="Account Name"
                       currentSort={sortConfig}
                       onSort={handleSort}
                     />
                     <TableHead className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Type</TableHead>
                     <SortableTableHeader
-                      columnKey="current_balance"
+                      sortKey="current_balance"
                       label="Balance"
                       currentSort={sortConfig}
                       onSort={handleSort}
@@ -897,7 +897,7 @@ export default function FinancePage() {
                     />
                     <TableHead className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Account Number</TableHead>
                     <SortableTableHeader
-                      columnKey="opening_balance"
+                      sortKey="opening_balance"
                       label="Opening Balance"
                       currentSort={sortConfig}
                       onSort={handleSort}

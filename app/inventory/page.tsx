@@ -184,8 +184,8 @@ export default function InventoryPage() {
     // Apply sorting
     if (sortConfig) {
       filtered.sort((a, b) => {
-        let aVal: any = a[sortConfig.key];
-        let bVal: any = b[sortConfig.key];
+        let aVal: any = (a as any)[sortConfig.key];
+        let bVal: any = (b as any)[sortConfig.key];
 
         if (['current_stock', 'stock_value'].includes(sortConfig.key)) {
           aVal = parseFloat(aVal) || 0;

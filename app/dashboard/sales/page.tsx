@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useCallback, memo } from 'react';
-import { ShoppingBag, Calendar, TrendingUp, Plus, Search, Eye, FileText, MoreVertical, Download, Mail, Copy, Edit, Trash2, Info } from 'lucide-react';
+import { ShoppingBag, Calendar, TrendingUp, Plus, Search, Eye, FileText, MoreVertical, Download, Mail, Copy, Edit, Trash2, Info, Sparkles } from 'lucide-react';
 import { SortableTableHeader, SortDirection } from '@/components/ui/SortableTableHeader';
 import { FilterDropdown, FilterOptions } from '@/components/ui/FilterDropdown';
 import { format } from 'date-fns';
@@ -64,7 +64,19 @@ const SaleRow = memo(({ sale, onEdit, onView, onDelete, onPrint, onShare }: {
 
   return (
     <TableRow className="hover:bg-slate-900/50 transition-colors" onClick={(e) => e.stopPropagation()}>
-      <TableCell className="font-medium text-slate-100">{sale.invoice_no}</TableCell>
+      <TableCell className="font-medium text-slate-100">
+        <div className="flex items-center gap-2">
+          {sale.invoice_no}
+          {sale.requires_production && (
+            <span title="Studio/Production Order">
+              <Sparkles 
+                size={14} 
+                className="text-indigo-400" 
+              />
+            </span>
+          )}
+        </div>
+      </TableCell>
       <TableCell className="text-slate-300">{format(new Date(sale.transaction_date), 'MMM dd, yyyy')}</TableCell>
       <TableCell className="text-slate-300">{sale.customer_name || 'Walk-in Customer'}</TableCell>
       <TableCell>
@@ -190,8 +202,8 @@ export default function SalesPage() {
     // Apply sorting
     if (sortConfig) {
       result.sort((a, b) => {
-        let aVal: any = a[sortConfig.key];
-        let bVal: any = b[sortConfig.key];
+        let aVal: any = (a as any)[sortConfig.key];
+        let bVal: any = (b as any)[sortConfig.key];
 
         // Handle date sorting
         if (sortConfig.key === 'transaction_date') {
