@@ -12,6 +12,7 @@
 import { supabase } from '../config/supabase.js';
 import { convertToBaseUnit, getPriceByCustomerType } from '../utils/unitConverter.js';
 import { validateStockAvailability, deductStockForSale } from './inventoryService.js';
+import { createProductionOrderFromSale } from './productionService.js';
 
 /**
  * Create a sales transaction
@@ -207,6 +208,31 @@ export async function createSale(saleData, businessId, userId) {
     throw new Error(`Failed to create sell lines: ${linesError.message}`);
   }
 
+  // [NEW] Create production order if needed (after transaction and lines, before stock deduction)
+  // Only for final sales with products that require production
+  let productionOrder = null;
+  if (status === 'final') {
+    try {
+      productionOrder = await createProductionOrderFromSale(
+        transaction,
+        createdLines,
+        businessId,
+        locationId,
+        userId
+      );
+      
+      if (productionOrder) {
+        console.log(`Production order created: ${productionOrder.order_no} (ID: ${productionOrder.id}) for sale ${transaction.invoice_no}`);
+      }
+    } catch (productionError) {
+      // Log error but don't fail sale (graceful failure)
+      // Production order is secondary - sale should succeed even if production order creation fails
+      console.error('Failed to create production order:', productionError);
+      console.error('Sale will continue without production order. Error:', productionError.message);
+      // Sale continues successfully - production order can be created manually if needed
+    }
+  }
+
   // If status is 'final', deduct stock
   let stockUpdates = [];
   if (status === 'final') {
@@ -237,6 +263,19 @@ export async function createSale(saleData, businessId, userId) {
     import('./automationService.js').then(({ triggerSaleNotifications }) => {
       triggerSaleNotifications(businessId, transaction).catch((err) => {
         console.error('Error triggering sale notifications:', err);
+      });
+    });
+  }
+
+  // PHASE D: Emit sale.created event for social media integration
+  if (status === 'final') {
+    import('./eventService.js').then(({ emitSystemEvent, EVENT_NAMES }) => {
+      emitSystemEvent(EVENT_NAMES.SALE_CREATED, {
+        sale: transaction,
+        businessId,
+        locationId,
+      }).catch((err) => {
+        console.error('Error emitting sale.created event:', err);
       });
     });
   }
@@ -444,6 +483,33 @@ export async function completeSale(transactionId, businessId) {
 
   if (updateError) {
     throw new Error(`Failed to complete transaction: ${updateError.message}`);
+  }
+
+  // [NEW] Create production order if needed (when draft is finalized)
+  // Get sell lines for production order creation
+  const { data: sellLinesForProduction } = await supabase
+    .from('transaction_sell_lines')
+    .select('*')
+    .eq('transaction_id', transactionId);
+
+  if (sellLinesForProduction && sellLinesForProduction.length > 0) {
+    try {
+      const productionOrder = await createProductionOrderFromSale(
+        updatedTransaction,
+        sellLinesForProduction,
+        businessId,
+        transaction.location_id,
+        transaction.created_by // Use transaction creator as userId
+      );
+      
+      if (productionOrder) {
+        console.log(`Production order created: ${productionOrder.order_no} (ID: ${productionOrder.id}) for finalized sale ${updatedTransaction.invoice_no}`);
+      }
+    } catch (productionError) {
+      // Log error but don't fail sale completion (graceful failure)
+      console.error('Failed to create production order for finalized sale:', productionError);
+      console.error('Sale completion will continue. Error:', productionError.message);
+    }
   }
 
   return updatedTransaction;

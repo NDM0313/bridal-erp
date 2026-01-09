@@ -414,7 +414,7 @@ export function DateRangePicker({ value, onChange, className, firstTransactionDa
                     Clear
                   </Button>
                   <Button
-                    variant="default"
+                    variant="primary"
                     size="sm"
                     onClick={() => applyRange(selectedRange)}
                     disabled={!selectedRange.from || !selectedRange.to}

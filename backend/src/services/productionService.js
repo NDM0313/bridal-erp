@@ -406,3 +406,144 @@ export async function getProductionOrders(businessId, options = {}) {
     },
   };
 }
+
+/**
+ * Create production order from sale transaction
+ * Auto-creates production order when sale contains products with requires_production = true
+ * 
+ * @param {object} transaction - Sale transaction
+ * @param {array} saleItems - Transaction sell lines
+ * @param {number} businessId - Business ID
+ * @param {number} locationId - Location ID (branch)
+ * @param {string} userId - User ID (created_by)
+ * @returns {Promise<object|null>} Created production order or null if not needed
+ */
+export async function createProductionOrderFromSale(transaction, saleItems, businessId, locationId, userId) {
+  // Step 1: Check if any products require production
+  const productIds = saleItems.map(item => item.product_id);
+  
+  if (productIds.length === 0) {
+    return null; // No products, no production order needed
+  }
+
+  const { data: products, error: productsError } = await supabase
+    .from('products')
+    .select('id, requires_production')
+    .in('id', productIds)
+    .eq('business_id', businessId);
+  
+  if (productsError) {
+    throw new Error(`Failed to check products: ${productsError.message}`);
+  }
+  
+  const needsProduction = products && products.some(p => p.requires_production === true);
+  
+  if (!needsProduction) {
+    return null; // No production order needed
+  }
+  
+  // Step 2: Check if order already exists (idempotency)
+  const { data: existing, error: existingError } = await supabase
+    .from('production_orders')
+    .select('id, order_no, status')
+    .eq('business_id', businessId)
+    .eq('transaction_id', transaction.id)
+    .single();
+  
+  if (existingError && existingError.code !== 'PGRST116') {
+    // PGRST116 = not found (expected), other errors are real issues
+    throw new Error(`Failed to check existing order: ${existingError.message}`);
+  }
+  
+  if (existing) {
+    // Already created, return existing (idempotent)
+    return existing;
+  }
+  
+  // Step 3: Generate order number
+  const orderNo = `PO-${transaction.invoice_no}`;
+  
+  // Step 4: Create production order
+  const { data: productionOrder, error: orderError } = await supabase
+    .from('production_orders')
+    .insert({
+      business_id: businessId,
+      customer_id: transaction.contact_id,
+      order_no: orderNo,
+      status: 'new',
+      total_cost: 0, // Will be calculated from steps
+      final_price: transaction.final_total,
+      description: `Auto-generated from Sale ${transaction.invoice_no}`,
+      transaction_id: transaction.id,
+      location_id: locationId,
+      created_by: userId,
+    })
+    .select()
+    .single();
+  
+  if (orderError) {
+    throw new Error(`Failed to create production order: ${orderError.message}`);
+  }
+
+  // PHASE D: Emit production.created event for social media integration
+  import('./eventService.js').then(({ emitSystemEvent, EVENT_NAMES }) => {
+    emitSystemEvent(EVENT_NAMES.PRODUCTION_CREATED, {
+      productionOrder,
+      businessId,
+    }).catch((err) => {
+      console.error('Error emitting production.created event:', err);
+    });
+  });
+  
+  // Step 5: Create default production steps
+  const defaultSteps = [
+    { stepName: 'Dyeing', cost: 0 },
+    { stepName: 'Handwork', cost: 0 },
+    { stepName: 'Stitching', cost: 0 },
+  ];
+  
+  const stepInserts = defaultSteps.map(step => ({
+    production_order_id: productionOrder.id,
+    step_name: step.stepName,
+    cost: step.cost,
+    status: 'pending',
+    step_qty: null, // Will be set later
+    completed_qty: 0,
+  }));
+  
+  const { error: stepsError } = await supabase
+    .from('production_steps')
+    .insert(stepInserts);
+  
+  if (stepsError) {
+    // Rollback production order if steps fail
+    await supabase.from('production_orders').delete().eq('id', productionOrder.id);
+    throw new Error(`Failed to create production steps: ${stepsError.message}`);
+  }
+  
+  // Step 6: Create production materials (optional - link to sale items)
+  const materialInserts = saleItems
+    .filter(item => item.product_id) // Only items with product_id
+    .map(item => ({
+      production_order_id: productionOrder.id,
+      product_id: item.product_id,
+      variation_id: item.variation_id || null,
+      quantity_used: item.quantity,
+      unit_id: item.unit_id,
+      unit_cost: item.unit_price || 0,
+      total_cost: (item.quantity || 0) * (item.unit_price || 0),
+    }));
+  
+  if (materialInserts.length > 0) {
+    const { error: materialsError } = await supabase
+      .from('production_materials')
+      .insert(materialInserts);
+    
+    if (materialsError) {
+      console.error('Failed to create production materials:', materialsError);
+      // Don't rollback - materials are optional
+    }
+  }
+  
+  return productionOrder;
+}

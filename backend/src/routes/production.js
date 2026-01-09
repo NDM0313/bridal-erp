@@ -12,6 +12,10 @@ import {
   updateProductionStepStatus,
   updateProductionOrderStatus,
 } from '../services/productionService.js';
+import {
+  updateStepCost,
+  getProductionCostReports,
+} from '../services/productionCostingService.js';
 
 const router = express.Router();
 
@@ -249,6 +253,117 @@ router.patch(
           },
         });
       }
+      next(error);
+    }
+  }
+);
+
+/**
+ * PATCH /api/v1/production/steps/:id/cost
+ * Update production step cost
+ * Requires: admin or manager role
+ */
+router.patch(
+  '/steps/:id/cost',
+  authenticateUser,
+  attachBusinessContext,
+  requirePermission('products.edit'), // Admin/Manager only
+  async (req, res, next) => {
+    try {
+      const stepId = parseInt(req.params.id);
+      const { cost } = req.body;
+
+      if (isNaN(stepId)) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid step ID',
+          },
+        });
+      }
+
+      if (cost === undefined || cost === null) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Cost is required',
+          },
+        });
+      }
+
+      if (typeof cost !== 'number' || cost < 0) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Cost must be a non-negative number',
+          },
+        });
+      }
+
+      const step = await updateStepCost(
+        stepId,
+        cost,
+        req.businessId,
+        req.user.id
+      );
+
+      res.json({
+        success: true,
+        data: step,
+      });
+    } catch (error) {
+      if (error.message === 'Production step not found') {
+        return res.status(404).json({
+          success: false,
+          error: {
+            code: 'STEP_NOT_FOUND',
+            message: error.message,
+          },
+        });
+      }
+      if (error.message.includes('does not belong')) {
+        return res.status(403).json({
+          success: false,
+          error: {
+            code: 'PERMISSION_DENIED',
+            message: error.message,
+          },
+        });
+      }
+      next(error);
+    }
+  }
+);
+
+/**
+ * GET /api/v1/production/cost-reports
+ * Get production cost reports
+ * Requires: admin, manager, or auditor role
+ */
+router.get(
+  '/cost-reports',
+  authenticateUser,
+  attachBusinessContext,
+  requirePermission('reports.advanced'), // Admin/Manager/Auditor
+  async (req, res, next) => {
+    try {
+      const options = {
+        orderId: req.query.order_id ? parseInt(req.query.order_id) : null,
+        stepType: req.query.step_type || null,
+        startDate: req.query.start_date || null,
+        endDate: req.query.end_date || null,
+      };
+
+      const reports = await getProductionCostReports(req.businessId, options);
+
+      res.json({
+        success: true,
+        data: reports,
+      });
+    } catch (error) {
       next(error);
     }
   }

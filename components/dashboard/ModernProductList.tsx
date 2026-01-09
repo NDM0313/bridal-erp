@@ -6,8 +6,9 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import { RoleGuard, AdminOnly } from '@/components/auth/RoleGuard';
 import { Skeleton, TableSkeleton } from '@/components/placeholders/SkeletonLoader';
 import { EmptyProducts } from '@/components/placeholders/EmptyState';
@@ -17,8 +18,6 @@ import { SmartTable, type Column } from '@/components/ui/SmartTable';
 import { ProductNameCell } from '@/components/products/ProductNameCell';
 import { StockCell } from '@/components/products/StockCell';
 import { ProductActionsMenu } from '@/components/products/ProductActionsMenu';
-import { PrintBarcodeModal } from '@/components/products/PrintBarcodeModal';
-import { StockHistoryModal } from '@/components/products/StockHistoryModal';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from '@/components/ui/Dialog';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -30,8 +29,24 @@ import { Trash2, Search, Plus, Package, Tag, Ruler, TrendingUp, AlertTriangle, L
 import { CategoryForm } from '@/components/products/CategoryForm';
 import { BrandForm } from '@/components/products/BrandForm';
 import { UnitForm } from '@/components/products/UnitForm';
-import { AddProductForm } from '@/components/products/AddProductForm';
 import { DropdownMenu, DropdownMenuItem } from '@/components/ui/DropdownMenu';
+import { useBranchV2 } from '@/lib/context/BranchContextV2';
+
+// Dynamic imports for heavy modals - only load when needed
+const PrintBarcodeModal = dynamic(
+  () => import('@/components/products/PrintBarcodeModal').then(mod => ({ default: mod.PrintBarcodeModal })),
+  { ssr: false, loading: () => null }
+);
+
+const StockHistoryModal = dynamic(
+  () => import('@/components/products/StockHistoryModal').then(mod => ({ default: mod.StockHistoryModal })),
+  { ssr: false, loading: () => null }
+);
+
+const AddProductForm = dynamic(
+  () => import('@/components/products/AddProductForm').then(mod => ({ default: mod.AddProductForm })),
+  { ssr: false, loading: () => null }
+);
 
 interface VariationInfo {
   product_variation_name: string; // "Size", "Color", "Fabric"
@@ -48,6 +63,7 @@ interface ProductWithRelations extends Product {
   price?: number;
   variations?: VariationInfo[]; // Grouped variations
   variationCount?: number; // Total number of variations
+  enable_stock?: boolean; // Add missing property
 }
 
 interface Category {
@@ -72,6 +88,8 @@ interface Unit {
 
 export function ModernProductList() {
   const router = useRouter();
+  const { activeBranch } = useBranchV2();
+  const activeBranchId = activeBranch?.id ? Number(activeBranch.id) : null;
   const [products, setProducts] = useState<ProductWithRelations[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -109,8 +127,10 @@ export function ModernProductList() {
   const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
 
   useEffect(() => {
-    loadProducts();
-  }, [searchTerm, categoryFilter, statusFilter]);
+    if (activeBranchId) {
+      loadProducts();
+    }
+  }, [searchTerm, categoryFilter, statusFilter, activeBranchId]);
 
   useEffect(() => {
     if (activeTab === 'categories' || activeTab === 'brands' || activeTab === 'units') {
@@ -220,12 +240,11 @@ export function ModernProductList() {
         is_inactive: statusFilter === 'inactive' ? true : statusFilter === 'active' ? false : undefined,
       });
 
-      // Get default location for stock queries
-      const { data: defaultLocation } = await supabase
-        .from('business_locations')
-        .select('id')
-        .limit(1)
-        .maybeSingle();
+      if (!activeBranchId) {
+        setProducts([]);
+        setLoading(false);
+        return;
+      }
 
       // Get variations for products to calculate stock
       const productIds = data.map(p => p.id);
@@ -236,12 +255,15 @@ export function ModernProductList() {
 
       const variationIds = variations?.map(v => v.id) || [];
 
-      // Get stock for all variations at default location
+      // CRITICAL: Get stock for all variations at active branch
+      const branchIdNum = Number(activeBranchId);
+      console.log('🔍 BRANCH FILTER [ModernProductList.loadProducts]', { branchIdNum, type: typeof branchIdNum });
+      
       const { data: stockData } = await supabase
         .from('variation_location_details')
         .select('variation_id, qty_available')
         .in('variation_id', variationIds)
-        .eq('location_id', defaultLocation?.id || 0);
+        .eq('location_id', branchIdNum); // CRITICAL: Filter by active branch (ensure number)
 
       // Create stock map: variation_id -> qty_available
       const stockMap = new Map<number, number>();
@@ -304,16 +326,26 @@ export function ModernProductList() {
       });
       
       // Group variations by product_id and product_variation_id
-      const variationsByProduct = new Map<number, Map<number, string[]>>();
+      // Store as { type: string, values: string[] } to show "Type: Value" format
+      const variationsByProduct = new Map<number, Array<{ type: string; values: string[] }>>();
       variationsData?.forEach((v: any) => {
         if (!variationsByProduct.has(v.product_id)) {
-          variationsByProduct.set(v.product_id, new Map());
+          variationsByProduct.set(v.product_id, []);
         }
         const productVariations = variationsByProduct.get(v.product_id)!;
-        if (!productVariations.has(v.product_variation_id)) {
-          productVariations.set(v.product_variation_id, []);
+        const variationType = productVariationMap.get(v.product_variation_id) || 'Variation';
+        
+        // Find existing variation type or create new
+        let variationGroup = productVariations.find(g => g.type === variationType);
+        if (!variationGroup) {
+          variationGroup = { type: variationType, values: [] };
+          productVariations.push(variationGroup);
         }
-        productVariations.get(v.product_variation_id)!.push(v.name);
+        
+        // Add the variation value (e.g., "Ibrahim", "Hasan")
+        if (v.name && v.name !== 'default') {
+          variationGroup.values.push(v.name);
+        }
       });
       
       // Build category hierarchy map
@@ -353,16 +385,15 @@ export function ModernProductList() {
         const variation = variationMap.get(product.id);
         const price = variation?.retail_price || 0;
 
-        // Get variations info
+        // Get variations info (already formatted as { type, values }[])
         const productVariationsMap = variationsByProduct.get(product.id);
         const variationsInfo: VariationInfo[] = [];
         if (productVariationsMap) {
-          productVariationsMap.forEach((variationNames, productVariationId) => {
-            const productVariationName = productVariationMap.get(productVariationId);
-            if (productVariationName && variationNames.length > 0) {
+          productVariationsMap.forEach((variationGroup) => {
+            if (variationGroup.values.length > 0) {
               variationsInfo.push({
-                product_variation_name: productVariationName,
-                variation_names: variationNames,
+                product_variation_name: variationGroup.type,
+                variation_names: variationGroup.values,
               });
             }
           });
@@ -406,7 +437,11 @@ export function ModernProductList() {
 
   // Action Handlers
   const handleEdit = (product: ProductWithRelations) => {
-    setEditProduct(product);
+    // Use setTimeout to ensure dropdown menu is fully closed before opening modal
+    // This prevents the dropdown backdrop from intercepting clicks
+    setTimeout(() => {
+      setEditProduct(product);
+    }, 200); // Wait for dropdown close animation and backdrop removal
   };
 
   const handleView = (product: ProductWithRelations) => {
@@ -803,11 +838,11 @@ export function ModernProductList() {
                 <Badge
                   variant="outline"
                   className="text-xs px-2 py-0.5 bg-blue-500/10 text-blue-400 border-blue-500/20 hover:bg-blue-500/20 cursor-pointer"
-                  title={`${variation.product_variation_name}: ${variation.variation_names.join(', ')}`}
+                  title={variation.variation_names.map(val => `${variation.product_variation_name}: ${val}`).join(', ')}
                 >
                   <span className="font-medium">{variation.product_variation_name}:</span>{' '}
                   <span className="text-blue-300">
-                    {variation.variation_names.slice(0, 2).join(', ')}
+                    {variation.variation_names.slice(0, 2).map(val => val).join(', ')}
                     {variation.variation_names.length > 2 && ` +${variation.variation_names.length - 2}`}
                   </span>
                 </Badge>
@@ -899,13 +934,13 @@ export function ModernProductList() {
       render: (product) => (
         <div className="flex justify-end">
           <ProductActionsMenu
-            product={product}
-            onEdit={handleEdit}
-            onView={handleView}
-            onPrintBarcode={handlePrintBarcode}
-            onDuplicate={handleDuplicate}
-            onViewHistory={handleViewHistory}
-            onDelete={handleDelete}
+            product={product as any}
+            onEdit={handleEdit as any}
+            onView={handleView as any}
+            onPrintBarcode={handlePrintBarcode as any}
+            onDuplicate={handleDuplicate as any}
+            onViewHistory={handleViewHistory as any}
+            onDelete={handleDelete as any}
           />
         </div>
       ),
@@ -1171,11 +1206,11 @@ export function ModernProductList() {
               </div>
               <div className="mt-4 flex justify-end">
                 <ProductActionsMenu
-                  product={product}
-                  onPrintBarcode={handlePrintBarcode}
-                  onDuplicate={handleDuplicate}
-                  onViewHistory={handleViewHistory}
-                  onDelete={handleDelete}
+                  product={product as any}
+                  onPrintBarcode={handlePrintBarcode as any}
+                  onDuplicate={handleDuplicate as any}
+                  onViewHistory={handleViewHistory as any}
+                  onDelete={handleDelete as any}
                 />
               </div>
             </div>
@@ -1525,7 +1560,17 @@ export function ModernProductList() {
 
       {/* Edit Product Modal */}
       {editProduct && (
-        <div className="fixed inset-0 z-50">
+        <div 
+          className="fixed inset-0 z-[1001]"
+          onClick={(e) => {
+            // Prevent clicks inside modal from bubbling to backdrop
+            e.stopPropagation();
+          }}
+          onMouseDown={(e) => {
+            // Prevent mousedown events from bubbling
+            e.stopPropagation();
+          }}
+        >
           <AddProductForm
             productId={editProduct.id}
             onClose={() => {
@@ -1544,12 +1589,12 @@ export function ModernProductList() {
       <PrintBarcodeModal
         isOpen={printBarcodeProduct !== null}
         onClose={() => setPrintBarcodeProduct(null)}
-        product={printBarcodeProduct}
+        product={printBarcodeProduct as any}
       />
       <StockHistoryModal
         isOpen={stockHistoryProduct !== null}
         onClose={() => setStockHistoryProduct(null)}
-        product={stockHistoryProduct}
+        product={stockHistoryProduct as any}
       />
 
       {/* View Product Details Modal */}

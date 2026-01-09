@@ -415,9 +415,9 @@ export default function ContactsPage() {
 
   return (
     <ModernDashboardLayout>
-      <div className="space-y-6 p-6">
+      <div className="space-y-6 p-6 standard-page-container">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between animate-entrance">
           <div>
             <h1 className="text-2xl font-bold text-white">Contact Management</h1>
             <p className="text-sm text-gray-400 mt-1">Central database for Suppliers and Customers</p>
@@ -425,7 +425,7 @@ export default function ContactsPage() {
           <Button
             variant="primary"
             onClick={() => setIsAddModalOpen(true)}
-            className="flex items-center gap-2"
+            className="flex items-center gap-2 transition-standard"
           >
             <Plus size={18} />
             Add Contact
@@ -435,7 +435,7 @@ export default function ContactsPage() {
         {/* Stats Row */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Receivables Card */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 relative overflow-hidden">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 relative overflow-hidden transition-standard hover-lift animate-entrance-delay-1">
             <div className="absolute top-0 right-0 p-4 opacity-10">
               <ArrowUpRight size={80} className="text-yellow-300" />
             </div>
@@ -452,7 +452,7 @@ export default function ContactsPage() {
           </div>
 
           {/* Payables Card */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 relative overflow-hidden">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 relative overflow-hidden transition-standard hover-lift animate-entrance-delay-2">
             <div className="absolute top-0 right-0 p-4 opacity-10">
               <ArrowDownRight size={80} className="text-white" />
             </div>
@@ -474,7 +474,7 @@ export default function ContactsPage() {
           <button
             onClick={() => setActiveTab('all')}
             className={cn(
-              'flex-1 px-4 py-2.5 rounded-lg font-medium transition-colors',
+              'flex-1 px-4 py-2.5 rounded-lg font-medium transition-standard',
               activeTab === 'all'
                 ? 'bg-blue-600 text-white'
                 : 'text-gray-400 hover:text-white hover:bg-gray-800'
@@ -485,7 +485,7 @@ export default function ContactsPage() {
           <button
             onClick={() => setActiveTab('customer')}
             className={cn(
-              'flex-1 px-4 py-2.5 rounded-lg font-medium transition-colors',
+              'flex-1 px-4 py-2.5 rounded-lg font-medium transition-standard',
               activeTab === 'customer'
                 ? 'bg-blue-600 text-white'
                 : 'text-gray-400 hover:text-white hover:bg-gray-800'
@@ -496,7 +496,7 @@ export default function ContactsPage() {
           <button
             onClick={() => setActiveTab('supplier')}
             className={cn(
-              'flex-1 px-4 py-2.5 rounded-lg font-medium transition-colors',
+              'flex-1 px-4 py-2.5 rounded-lg font-medium transition-standard',
               activeTab === 'supplier'
                 ? 'bg-blue-600 text-white'
                 : 'text-gray-400 hover:text-white hover:bg-gray-800'
@@ -555,7 +555,7 @@ export default function ContactsPage() {
             />
           </div>
         ) : (
-          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden transition-standard animate-entrance-delay-3">
             <Table>
               <TableHeader>
                 <TableRow className="bg-gray-950/50 border-gray-800">
@@ -580,7 +580,7 @@ export default function ContactsPage() {
                     .substring(0, 2);
 
                   return (
-                    <TableRow key={contact.id} className="hover:bg-gray-800/30 transition-colors">
+                    <TableRow key={contact.id} className="hover:bg-gray-800/30 transition-standard">
                       <TableCell>
                         <div className="flex items-center gap-3">
                           <Avatar className="h-10 w-10">
@@ -739,10 +739,10 @@ export default function ContactsPage() {
           onSuccess={() => {
             loadContacts();
           }}
-          contact={selectedContact ? {
+          contact={selectedContact && selectedContact.type ? {
             id: selectedContact.id,
             name: selectedContact.name,
-            type: selectedContact.type,
+            type: selectedContact.type as 'customer' | 'supplier' | 'both',
             receivables: selectedContact.receivables,
             payables: selectedContact.payables,
           } : null}

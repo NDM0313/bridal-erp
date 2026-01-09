@@ -7,6 +7,9 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+// PHASE D: Initialize event listeners early (must be imported before routes)
+import './services/socialMediaService.js';
+
 import express from 'express';
 import cors from 'cors';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
@@ -30,6 +33,10 @@ import testRoutes from './routes/test.js';
 import rentalRoutes from './routes/rentals.js';
 import productionRoutes from './routes/production.js';
 import accountingRoutes from './routes/accounting.js';
+// Phase B: Production Worker Routes
+import workerRoutes from './routes/worker.js';
+// Phase D: Social Media Routes
+import socialRoutes from './routes/social.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -66,6 +73,10 @@ app.use('/api/v1/monitoring', monitoringRoutes);
 app.use('/api/v1/rentals', rentalRoutes);
 app.use('/api/v1/production', productionRoutes);
 app.use('/api/v1/accounting', accountingRoutes);
+// Phase B: Production Worker Routes
+app.use('/api/v1/worker', workerRoutes);
+// Phase D: Social Media Routes
+app.use('/api/v1/social', socialRoutes);
 
 // 404 Handler
 app.use(notFoundHandler);

@@ -1,7 +1,9 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Plus, MoreVertical, Calendar, ArrowRight, Loader2, Eye, Package, CheckCircle, Printer, LayoutList, Search, Edit, Copy, Trash2, XCircle, Share2, AlertCircle } from 'lucide-react';
+import { SortableTableHeader, SortDirection } from '@/components/ui/SortableTableHeader';
+import { FilterDropdown, FilterOptions } from '@/components/ui/FilterDropdown';
 import { format, differenceInDays } from 'date-fns';
 import { ModernDashboardLayout } from '@/components/layout/ModernDashboardLayout';
 import { Button } from '@/components/ui/Button';
@@ -33,6 +35,8 @@ export default function RentalsPage() {
   const [selectedBookingForEdit, setSelectedBookingForEdit] = useState<RentalBooking | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: SortDirection } | null>(null);
+  const [filters, setFilters] = useState<FilterOptions>({});
   
   // Calculate stats
   const activeRentals = bookings.filter(b => b.status === 'reserved' || b.status === 'out').length;
@@ -336,39 +340,92 @@ export default function RentalsPage() {
     );
   };
 
-  // Filter bookings by search term
-  const filteredBookings = useMemo(() => {
-    if (!searchTerm.trim()) return bookings;
-
-    const term = searchTerm.toLowerCase().trim();
-    return bookings.filter((booking) => {
-      // Search by invoice number
-      if (booking.invoice_number?.toLowerCase().includes(term)) return true;
-      
-      // Search by booking ID
-      if (booking.id.toString().includes(term)) return true;
-      
-      // Search by customer name
-      if (booking.contact?.name?.toLowerCase().includes(term)) return true;
-      
-      // Search by customer mobile/phone
-      if (booking.contact?.mobile?.toLowerCase().includes(term)) return true;
-      
-      // Search by customer email
-      if (booking.contact?.email?.toLowerCase().includes(term)) return true;
-      
-      // Search by product name
-      if (booking.product?.name?.toLowerCase().includes(term)) return true;
-      
-      // Search by product SKU
-      if (booking.product?.sku?.toLowerCase().includes(term)) return true;
-      
-      // Search by variation SKU
-      if (booking.variation?.sub_sku?.toLowerCase().includes(term)) return true;
-      
-      return false;
+  // Handle sorting
+  const handleSort = useCallback((key: string) => {
+    setSortConfig((current) => {
+      if (current?.key === key) {
+        if (current.direction === 'asc') {
+          return { key, direction: 'desc' };
+        } else {
+          return null;
+        }
+      }
+      return { key, direction: 'asc' };
     });
-  }, [bookings, searchTerm]);
+  }, []);
+
+  // Filter and sort bookings
+  const filteredBookings = useMemo(() => {
+    let result = [...bookings];
+
+    // Apply search filter
+    if (searchTerm.trim()) {
+      const term = searchTerm.toLowerCase().trim();
+      result = result.filter((booking) => {
+        if (booking.invoice_number?.toLowerCase().includes(term)) return true;
+        if (booking.id.toString().includes(term)) return true;
+        if (booking.contact?.name?.toLowerCase().includes(term)) return true;
+        if (booking.contact?.mobile?.toLowerCase().includes(term)) return true;
+        if (booking.contact?.email?.toLowerCase().includes(term)) return true;
+        if (booking.product?.name?.toLowerCase().includes(term)) return true;
+        if (booking.product?.sku?.toLowerCase().includes(term)) return true;
+        if (booking.variation?.sub_sku?.toLowerCase().includes(term)) return true;
+        return false;
+      });
+    }
+
+    // Apply date range filter
+    if (filters.dateRange?.start || filters.dateRange?.end) {
+      result = result.filter((booking) => {
+        const pickupDate = new Date(booking.pickup_date);
+        if (filters.dateRange?.start && pickupDate < new Date(filters.dateRange.start)) return false;
+        if (filters.dateRange?.end && pickupDate > new Date(filters.dateRange.end)) return false;
+        return true;
+      });
+    }
+
+    // Apply sorting
+    if (sortConfig) {
+      result.sort((a, b) => {
+        let aVal: any;
+        let bVal: any;
+
+        if (sortConfig.key === 'invoice_number') {
+          aVal = a.invoice_number || '';
+          bVal = b.invoice_number || '';
+        } else if (sortConfig.key === 'customer_name') {
+          aVal = a.contact?.name || '';
+          bVal = b.contact?.name || '';
+        } else if (sortConfig.key === 'product_name') {
+          aVal = a.product?.name || '';
+          bVal = b.product?.name || '';
+        } else if (sortConfig.key === 'pickup_date') {
+          aVal = new Date(a.pickup_date).getTime();
+          bVal = new Date(b.pickup_date).getTime();
+        } else if (sortConfig.key === 'return_date') {
+          aVal = new Date(a.return_date).getTime();
+          bVal = new Date(b.return_date).getTime();
+        } else if (sortConfig.key === 'rental_amount') {
+          aVal = parseFloat((a as any).rental_amount) || 0;
+          bVal = parseFloat((b as any).rental_amount) || 0;
+        } else {
+          aVal = (a as any)[sortConfig.key];
+          bVal = (b as any)[sortConfig.key];
+        }
+
+        if (typeof aVal === 'string') {
+          aVal = aVal.toLowerCase();
+          bVal = bVal.toLowerCase();
+        }
+
+        if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    return result;
+  }, [bookings, searchTerm, filters, sortConfig]);
 
   // Filter counts (based on all bookings, not filtered)
   const statusCounts = {
@@ -485,16 +542,36 @@ export default function RentalsPage() {
               ))}
             </div>
 
-            {/* Search Box - Only visible in List View */}
+            {/* Search & Filter Box - Only visible in List View */}
             {viewMode === 'list' && (
-              <div className="relative flex-shrink-0">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
-                <Input
-                  type="text"
-                  placeholder="Search by invoice number, customer, product, or phone..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-9 pr-4 h-9 w-64 bg-gray-800 border-gray-700 text-white text-sm placeholder:text-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              <div className="flex items-center gap-3">
+                <div className="relative flex-shrink-0">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500 pointer-events-none z-10" />
+                  <Input
+                    type="text"
+                    placeholder="Search by invoice number, customer, product, or phone..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10 pr-4 h-9 w-64 bg-gray-800 border-gray-700 text-white text-sm placeholder:text-gray-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 transition-standard"
+                  />
+                </div>
+                <FilterDropdown
+                  onFilterChange={(f) => {
+                    // Apply filters to bookings
+                    if (f.status && f.status !== 'all') {
+                      setStatusFilter(f.status as StatusFilter);
+                    }
+                  }}
+                  activeFilters={{ status: statusFilter === 'all' ? undefined : statusFilter }}
+                  showDateRange={true}
+                  showStatus={true}
+                  statusOptions={[
+                    { value: 'all', label: 'All Status' },
+                    { value: 'reserved', label: 'Reserved' },
+                    { value: 'out', label: 'Active' },
+                    { value: 'returned', label: 'Returned' },
+                    { value: 'not_returned', label: 'Not Returned' },
+                  ]}
                 />
               </div>
             )}
@@ -551,13 +628,42 @@ export default function RentalsPage() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-gray-900/50">
-                  <TableHead>Booking ID</TableHead>
-                  <TableHead>Customer</TableHead>
-                  <TableHead>Product</TableHead>
-                  <TableHead>Dates</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Amounts</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <SortableTableHeader
+                    label="Booking ID"
+                    sortKey="invoice_number"
+                    currentSort={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHeader
+                    label="Customer"
+                    sortKey="customer_name"
+                    currentSort={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHeader
+                    label="Product"
+                    sortKey="product_name"
+                    currentSort={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHeader
+                    label="Pickup Date"
+                    sortKey="pickup_date"
+                    currentSort={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <TableHead className="px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
+                    Status
+                  </TableHead>
+                  <SortableTableHeader
+                    label="Amount"
+                    sortKey="rental_amount"
+                    currentSort={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <TableHead className="text-right px-4 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">
+                    Actions
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -583,7 +689,9 @@ export default function RentalsPage() {
                             {booking.invoice_number || `#${booking.id}`}
                           </span>
                           {isOverdue && (
-                            <AlertCircle size={14} className="text-red-400" title={`${daysOverdue} days overdue`} />
+                            <span title={`${daysOverdue} days overdue`}>
+                              <AlertCircle size={14} className="text-red-400" />
+                            </span>
                           )}
                         </div>
                       </TableCell>

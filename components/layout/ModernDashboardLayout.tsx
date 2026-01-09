@@ -21,27 +21,25 @@ import {
   ShoppingBag,
   BarChart3,
   Menu,
-  X,
   LogOut,
   Warehouse,
-  ArrowLeftRight,
-  ClipboardList,
   CreditCard,
   Calculator,
   Contact,
   Users,
   Settings,
+  Building2,
   Bell,
   Search,
   ChevronLeft,
   ChevronRight,
-  Blocks,
   FileText,
   Shirt,
   Scissors,
   Truck,
-  DollarSign,
   Wallet,
+  Receipt,
+  BookOpen,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -54,6 +52,8 @@ import { NavLinkWithPrefetch } from './NavLinkWithPrefetch';
 // import { motion, AnimatePresence } from 'framer-motion';
 
 import type { RolePermissions } from '@/lib/types/roles';
+import { UniversalSearch } from '@/components/header/UniversalSearch';
+import { BranchSelector } from '@/components/header/BranchSelector';
 
 interface NavItem {
   id: string;
@@ -69,17 +69,17 @@ const navigation: NavItem[] = [
   { id: 'products', label: 'Products', href: '/products', icon: Package, permission: 'canViewProducts' },
   { id: 'sales', label: 'Sales', href: '/dashboard/sales', icon: FileText, permission: 'canViewSales' },
   { id: 'purchases', label: 'Purchases', href: '/purchases', icon: ShoppingBag },
+  { id: 'expenses', label: 'Expenses', href: '/dashboard/expenses', icon: Receipt },
   { id: 'rentals', label: 'Rentals', href: '/dashboard/rentals', icon: Shirt },
   { id: 'studio', label: 'Studio', href: '/dashboard/studio', icon: Scissors },
   { id: 'vendors', label: 'Vendors', href: '/dashboard/vendors', icon: Truck },
-  { id: 'finance', label: 'Finance', href: '/dashboard/finance', icon: DollarSign },
+  { id: 'accounts', label: 'Accounts', href: '/dashboard/finance', icon: Wallet },
   { id: 'inventory', label: 'Inventory', href: '/inventory', icon: Warehouse, permission: 'canViewStock' },
-  { id: 'transfers', label: 'Stock Transfers', href: '/transfers', icon: ArrowLeftRight, permission: 'canTransferStock' },
-  { id: 'adjustments', label: 'Stock Adjustments', href: '/adjustments', icon: ClipboardList, permission: 'canAdjustStock' },
   { id: 'reports', label: 'Reports', href: '/reports', icon: BarChart3, permission: 'canViewBasicReports' },
   { id: 'contacts', label: 'Contacts', href: '/dashboard/contacts', icon: Contact },
-  { id: 'users', label: 'Users', href: '/dashboard/users', icon: Users, permission: 'canManageUsers' },
-  { id: 'settings', label: 'Settings', href: '/dashboard/settings', icon: Settings, permission: 'canManageBusiness' },
+  { id: 'users', label: 'Users', href: '/dashboard/users', icon: Users }, // ROLE-BLIND: No permission check
+  { id: 'settings', label: 'Settings', href: '/dashboard/settings', icon: Settings }, // ROLE-BLIND: No permission check
+  { id: 'branches', label: 'Branches', href: '/settings/branches', icon: Building2 }, // Branch Management
 ];
 
 export function ModernDashboardLayout({ children }: { children: React.ReactNode }) {
@@ -118,15 +118,92 @@ export function ModernDashboardLayout({ children }: { children: React.ReactNode 
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Filter navigation based on permissions - memoized to prevent infinite loops
-  // MUST be called before any conditional returns (Rules of Hooks)
+  // Load module settings from localStorage
+  const [moduleSettings, setModuleSettings] = useState<{
+    module_rental?: boolean;
+    module_pos?: boolean;
+    module_studio?: boolean;
+    module_vendors?: boolean;
+    module_reporting?: boolean;
+    module_accounting?: boolean;
+  }>({});
+
+  useEffect(() => {
+    const loadModuleSettings = () => {
+      const stored = localStorage.getItem('studio_rently_settings');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          setModuleSettings({
+            module_rental: parsed.module_rental ?? true,
+            module_pos: parsed.module_pos ?? true,
+            module_studio: parsed.module_studio ?? true,
+            module_vendors: parsed.module_vendors ?? true,
+            module_reporting: parsed.module_reporting ?? true,
+            module_accounting: parsed.module_accounting ?? true,
+          });
+        } catch (e) {
+          // Use defaults
+          setModuleSettings({
+            module_rental: true,
+            module_pos: true,
+            module_studio: true,
+            module_vendors: true,
+            module_reporting: true,
+            module_accounting: true,
+          });
+        }
+      } else {
+        // Defaults
+        setModuleSettings({
+          module_rental: true,
+          module_pos: true,
+          module_studio: true,
+          module_vendors: true,
+          module_reporting: true,
+          module_accounting: true,
+        });
+      }
+    };
+    loadModuleSettings();
+    
+    // Listen for storage changes (cross-tab) and custom events (same-tab)
+    window.addEventListener('storage', loadModuleSettings);
+    window.addEventListener('settingsUpdated', ((e: CustomEvent) => {
+      const settings = e.detail;
+      setModuleSettings({
+        module_rental: settings.module_rental ?? true,
+        module_pos: settings.module_pos ?? true,
+        module_studio: settings.module_studio ?? true,
+        module_vendors: settings.module_vendors ?? true,
+        module_reporting: settings.module_reporting ?? true,
+        module_accounting: settings.module_accounting ?? true,
+      });
+    }) as EventListener);
+    
+    return () => {
+      window.removeEventListener('storage', loadModuleSettings);
+      window.removeEventListener('settingsUpdated', loadModuleSettings);
+    };
+  }, []);
+
+  // Filter navigation based on permissions and module settings
   const filteredNavigation = useMemo(() => {
     return navigation.filter((item) => {
+      // Check module settings - hide items if their module is disabled
+      if (item.id === 'rentals' && moduleSettings.module_rental === false) return false;
+      if (item.id === 'pos' && moduleSettings.module_pos === false) return false;
+      if (item.id === 'studio' && moduleSettings.module_studio === false) return false;
+      if (item.id === 'vendors' && moduleSettings.module_vendors === false) return false;
+      if (item.id === 'reports' && moduleSettings.module_reporting === false) return false;
+      if (item.id === 'finance' && moduleSettings.module_accounting === false) return false;
+      
+      // Check permissions
       if (!item.permission) return true;
       // RoleGuard will handle permission check - but we show all items immediately
       return true; // Show all items, RoleGuard will hide based on permission
     });
-  }, []); // Empty deps - navigation array is static
+  }, [moduleSettings]); // Include moduleSettings in deps
 
   // Memoized click handler for navigation items
   // MUST be called before any conditional returns (Rules of Hooks)
@@ -165,13 +242,19 @@ export function ModernDashboardLayout({ children }: { children: React.ReactNode 
         />
       )}
 
-      {/* Sidebar - Fixed height to prevent CLS */}
+      {/* Sidebar - Fixed height to prevent CLS - CRITICAL: Always accessible even when modals are open */}
       <aside 
         className={cn(
-          "fixed lg:static z-50 h-screen bg-slate-900/80 backdrop-blur-xl border-r border-slate-800 transition-all duration-300 ease-in-out flex flex-col flex-shrink-0",
+          "fixed lg:static h-screen bg-slate-900/80 backdrop-blur-xl border-r border-slate-800 transition-all duration-300 ease-in-out flex flex-col flex-shrink-0",
           collapsed ? "w-[80px]" : "w-[280px]",
           isMobile && !mobileMenuOpen ? "-translate-x-full" : "translate-x-0"
         )}
+        style={{
+          // CRITICAL: Always allow pointer events so sidebar is clickable even when modals are open
+          zIndex: 30, // Sidebar level
+          pointerEvents: 'auto',
+          isolation: 'isolate'
+        }}
       >
         {/* Sidebar Header */}
         <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800/50">
@@ -197,7 +280,7 @@ export function ModernDashboardLayout({ children }: { children: React.ReactNode 
         </div>
 
         {/* Sidebar Navigation - Render all items immediately, no conditional rendering */}
-        <div className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5 scrollbar-thin scrollbar-thumb-slate-800">
+        <div className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
           {filteredNavigation.map((item) => {
             // Active state logic:
             // 1. Exact match: pathname === item.href
@@ -219,7 +302,9 @@ export function ModernDashboardLayout({ children }: { children: React.ReactNode 
                 <item.icon size={20} strokeWidth={isActive ? 2 : 1.5} className={cn("transition-transform group-hover:scale-110 shrink-0", isActive && "text-blue-400")} />
                 
                 {!collapsed && (
-                  <span className="ml-3 font-medium text-sm whitespace-nowrap">{item.label}</span>
+                  <span className="ml-3 font-medium text-sm whitespace-nowrap">
+                    {item.label}
+                  </span>
                 )}
                 
                 {/* Tooltip for collapsed state */}
@@ -232,6 +317,7 @@ export function ModernDashboardLayout({ children }: { children: React.ReactNode 
             );
 
             // Wrap with RoleGuard if permission required
+            // Users and Settings have NO permission, so they bypass RoleGuard and are always visible
             if (item.permission) {
               return (
                 <RoleGuard key={item.id} permission={item.permission}>
@@ -240,6 +326,7 @@ export function ModernDashboardLayout({ children }: { children: React.ReactNode 
               );
             }
 
+            // Users and Settings are returned WITHOUT RoleGuard - always visible
             return <div key={item.id}>{NavButton}</div>;
           })}
         </div>
@@ -291,17 +378,15 @@ export function ModernDashboardLayout({ children }: { children: React.ReactNode 
                 <Menu size={24} />
               </button>
             )}
-            <div className="hidden md:flex items-center gap-2 text-slate-400 bg-slate-900/50 px-3 py-1.5 rounded-full border border-slate-800/50 focus-within:border-blue-500/50 focus-within:text-blue-400 transition-colors w-64 lg:w-96">
-              <Search size={16} />
-              <input 
-                type="text" 
-                placeholder="Search products, orders, customers..." 
-                className="bg-transparent border-none outline-none text-sm w-full text-slate-200 placeholder:text-slate-600"
-              />
+            {/* Universal Search - Hidden on mobile */}
+            <div className="hidden md:block flex-1 max-w-md">
+              <UniversalSearch />
             </div>
           </div>
 
-          <div className="flex items-center gap-3 lg:gap-6">
+          <div className="flex items-center gap-3 lg:gap-4">
+            {/* Branch Selector */}
+            <BranchSelector />
             <button className="relative text-slate-400 hover:text-white transition-colors">
               <Bell size={20} />
               <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>

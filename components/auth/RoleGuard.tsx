@@ -10,6 +10,7 @@
 import { ReactNode } from 'react';
 import { useRole } from '@/lib/hooks/useRole';
 import type { RolePermissions } from '@/lib/types/roles';
+import { isDemoMode, demoConfig } from '@/lib/config/demoConfig';
 
 interface RoleGuardProps {
   permission: keyof RolePermissions;
@@ -19,6 +20,12 @@ interface RoleGuardProps {
 
 export function RoleGuard({ permission, children, fallback = null }: RoleGuardProps) {
   const { hasPermission, loading } = useRole();
+
+  // DEMO MODE: Bypass all permissions for full access
+  if (isDemoMode() && demoConfig.bypassPermissions) {
+    console.log('🎭 Demo Mode: Permission bypassed for', permission);
+    return <>{children}</>;
+  }
 
   // Show children while loading to prevent staggered rendering
   // Permission check will hide them if needed after loading
@@ -38,6 +45,12 @@ export function RoleGuard({ permission, children, fallback = null }: RoleGuardPr
  */
 export function AdminOnly({ children, fallback = null }: { children: ReactNode; fallback?: ReactNode }) {
   const { isAdmin, loading } = useRole();
+
+  // DEMO MODE: Bypass admin check for full access
+  if (isDemoMode() && demoConfig.bypassPermissions) {
+    console.log('🎭 Demo Mode: Admin check bypassed');
+    return <>{children}</>;
+  }
 
   if (loading) return null;
   if (!isAdmin) return <>{fallback}</>;

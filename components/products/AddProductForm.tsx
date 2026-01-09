@@ -19,14 +19,19 @@ import { CategoryForm } from './CategoryForm';
 import { BrandForm } from './BrandForm';
 import { UnitForm } from './UnitForm';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/Sheet';
+import { useGlobalRefresh } from '@/lib/hooks/useGlobalRefresh';
 
 interface AddProductFormProps {
+  isOpen?: boolean;
   onClose?: () => void;
-  onSuccess?: () => void;
+  onSuccess?: (productId?: number, productName?: string) => void; // Pass product ID and name on success
   productId?: number; // For editing existing product
+  initialName?: string; // Pre-fill product name (for Quick Add from Sales)
 }
 
-export function AddProductForm({ onClose, onSuccess, productId }: AddProductFormProps) {
+export function AddProductForm({ isOpen = true, onClose, onSuccess, productId, initialName }: AddProductFormProps) {
+  const { handleSuccess } = useGlobalRefresh();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -89,8 +94,11 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
     loadOptions();
     if (productId) {
       loadProductData(productId);
+    } else if (initialName && !formData.name) {
+      // Pre-fill name when opened from Quick Add
+      setFormData((prev) => ({ ...prev, name: initialName }));
     }
-  }, [productId]);
+  }, [productId, initialName]);
 
   useEffect(() => {
     // Calculate selling price from purchase price and profit margin
@@ -251,6 +259,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
         is_rentable: false,
         rental_price: 0,
         security_deposit: 0,
+        opening_stock_date: new Date().toISOString().split('T')[0], // Add default date
       });
 
       if (loadedVariations.length > 0) {
@@ -622,26 +631,6 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                   console.log(`Stock saved successfully for variation ${variation.id}: ${formData.initial_stock}`);
                 }
               }
-            } else if (defaultLocation && formData.initial_stock === 0) {
-              // Create stock entry with 0 if tracking is enabled
-              const { data: existingStock } = await supabase
-                .from('variation_location_details')
-                .select('id')
-                .eq('variation_id', variation.id)
-                .eq('location_id', defaultLocation.id)
-                .maybeSingle();
-
-              if (!existingStock) {
-                await supabase
-                  .from('variation_location_details')
-                  .insert({
-                    variation_id: variation.id,
-                    product_id: newProduct.id,
-                    product_variation_id: productVariation.id,
-                    location_id: defaultLocation.id,
-                    qty_available: 0,
-                  });
-              }
             } else {
               console.warn('No default location found. Stock not saved for variation:', variation.id);
             }
@@ -754,8 +743,10 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
         }
       }
 
-      toast.success(isEditMode ? 'Product updated successfully!' : 'Product created successfully!');
-      if (onSuccess) onSuccess();
+      // Refresh products and inventory lists immediately
+      await handleSuccess('products', isEditMode ? 'Product updated successfully!' : 'Product created successfully!', ['inventory']);
+      
+      if (onSuccess) onSuccess(newProduct.id, newProduct.name);
       if (onClose) onClose();
       else router.push('/products');
     } catch (err) {
@@ -768,43 +759,72 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
     }
   };
 
-  return (
-    <div 
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 pointer-events-auto"
-      onClick={(e) => {
-        // Close modal when clicking on backdrop
-        if (e.target === e.currentTarget) {
-          if (onClose) onClose();
-          else router.back();
-        }
-      }}
-    >
-      <div 
-        className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto relative pointer-events-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="sticky top-0 bg-gray-900 border-b border-gray-800 p-6 flex items-center justify-between z-10">
-          <div>
-            <h2 className="text-2xl font-bold text-white">
-              {isEditMode ? 'Edit Product' : 'Add New Product'}
-            </h2>
-            <p className="text-sm text-gray-400 mt-1">
-              {isEditMode ? 'Update product details' : 'Complete product details for inventory'}
-            </p>
-          </div>
-          {onClose && (
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-800 rounded-lg"
-            >
-              <X size={20} />
-            </button>
-          )}
-        </div>
+  const handleSheetOpenChange = (open: boolean) => {
+    if (!open && onClose) {
+      onClose();
+    }
+  };
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-8">
+  return (
+    <>
+    <Sheet open={isOpen} onOpenChange={handleSheetOpenChange}>
+      <SheetContent 
+        side="right" 
+        className="bg-[#0B0F1A] border-l border-gray-800 p-0 overflow-hidden [&>button]:hidden w-full sm:w-full md:max-w-[1000px] h-screen z-[1002] [&+div]:z-[1001]"
+        onClick={(e) => {
+          // Prevent clicks inside modal from closing it
+          e.stopPropagation();
+        }}
+        onMouseDown={(e) => {
+          // Prevent mousedown events from bubbling to parent
+          e.stopPropagation();
+        }}
+      >
+        <div className="flex flex-col h-full w-full">
+          {/* Header */}
+          <SheetHeader className="border-b border-gray-800 p-6 bg-[#0B0F1A]">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <button onClick={onClose || (() => router.back())} className="text-gray-400 hover:text-white">
+                  <X size={20} />
+                </button>
+                <div>
+                  <SheetTitle className="text-2xl font-bold text-white">
+                    {isEditMode ? 'Edit Product' : 'Add New Product'}
+                  </SheetTitle>
+                  <p className="text-sm text-gray-400 mt-1">
+                    {isEditMode ? 'Update product details' : 'Complete product details for inventory'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </SheetHeader>
+
+          {/* Content */}
+          <div 
+            className="flex-1 overflow-y-auto p-6 space-y-8 bg-[#0B0F1A]"
+            onClick={(e) => {
+              // Prevent clicks inside form from bubbling
+              e.stopPropagation();
+            }}
+            onMouseDown={(e) => {
+              // Prevent mousedown events from bubbling
+              e.stopPropagation();
+            }}
+          >
+            {/* Form */}
+            <form 
+              onSubmit={handleSubmit} 
+              className="space-y-8"
+              onClick={(e) => {
+                // Prevent form clicks from bubbling
+                e.stopPropagation();
+              }}
+              onMouseDown={(e) => {
+                // Prevent form mousedown from bubbling
+                e.stopPropagation();
+              }}
+            >
           {loadingProduct && (
             <div className="bg-blue-500/10 border border-blue-500/20 text-blue-400 px-4 py-3 rounded-lg">
               Loading product data...
@@ -837,7 +857,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   placeholder="e.g. Cotton Premium Shirt"
-                  className="bg-gray-800 border-gray-700 text-white"
+                  className="bg-[#111827] border-gray-800 text-white"
                 />
               </div>
 
@@ -869,7 +889,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                 <select
                   value={formData.barcode_type || 'C128'}
                   onChange={(e) => setFormData({ ...formData, barcode_type: e.target.value || 'C128' })}
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full bg-[#111827] border border-gray-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="C128">CODE-128</option>
                   <option value="C39">CODE-39</option>
@@ -902,7 +922,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                         setFormData({ ...formData, brand_id: parseInt(value) });
                       }
                     }}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white"
+                    className="w-full bg-[#111827] border border-gray-800 rounded-lg px-4 py-2 text-white"
                   >
                     <option value={0}>Select Brand</option>
                     {brands.map((brand) => (
@@ -928,7 +948,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                         setFormData({ ...formData, category_id: parseInt(value) });
                       }
                     }}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white"
+                    className="w-full bg-[#111827] border border-gray-800 rounded-lg px-4 py-2 text-white"
                   >
                     <option value={0}>Select Category</option>
                     {categories.filter(cat => !cat.parent_id).map((category) => (
@@ -988,7 +1008,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                         setFormData({ ...formData, unit_id: parseInt(value) });
                       }
                     }}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white"
+                    className="w-full bg-[#111827] border border-gray-800 rounded-lg px-4 py-2 text-white"
                   >
                     <option value={0}>Select Unit</option>
                     {units.map((unit) => (
@@ -1025,7 +1045,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                     step="0.01"
                     value={formData.purchase_price || 0}
                     onChange={(e) => setFormData({ ...formData, purchase_price: parseFloat(e.target.value) || 0 })}
-                    className="bg-gray-800 border-gray-700 text-white"
+                    className="bg-[#111827] border-gray-800 text-white"
                   />
                 </div>
 
@@ -1037,7 +1057,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                     step="0.01"
                     value={formData.profit_margin || 0}
                     onChange={(e) => setFormData({ ...formData, profit_margin: parseFloat(e.target.value) || 0 })}
-                    className="bg-gray-800 border-gray-700 text-white"
+                    className="bg-[#111827] border-gray-800 text-white"
                   />
                 </div>
 
@@ -1061,7 +1081,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                   <select
                     value={formData.tax_type}
                     onChange={(e) => setFormData({ ...formData, tax_type: e.target.value })}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white"
+                    className="w-full bg-[#111827] border border-gray-800 rounded-lg px-4 py-2 text-white"
                   >
                     <option value="">Select Tax Type</option>
                     <option value="standard">Standard (10%)</option>
@@ -1092,7 +1112,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                   <div className="flex items-center gap-2">
                     <Switch
                       checked={formData.is_rentable}
-                      onChange={(e) => setFormData({ ...formData, is_rentable: e.target.checked })}
+                      onCheckedChange={(checked) => setFormData({ ...formData, is_rentable: checked })}
                     />
                     <Label className="text-white">Enable Rental</Label>
                   </div>
@@ -1105,7 +1125,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                           min="0"
                           value={formData.rental_price || 0}
                           onChange={(e) => setFormData({ ...formData, rental_price: parseFloat(e.target.value) || 0 })}
-                          className="bg-gray-800 border-gray-700 text-white"
+                          className="bg-[#111827] border-gray-800 text-white"
                         />
                       </div>
                       <div>
@@ -1115,7 +1135,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                           min="0"
                           value={formData.security_deposit || 0}
                           onChange={(e) => setFormData({ ...formData, security_deposit: parseFloat(e.target.value) || 0 })}
-                          className="bg-gray-800 border-gray-700 text-white"
+                          className="bg-[#111827] border-gray-800 text-white"
                         />
                       </div>
                     </div>
@@ -1140,9 +1160,9 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                 <div className="flex items-center gap-2">
                   <Switch
                     checked={enableVariations}
-                    onChange={(e) => {
-                      setEnableVariations(e.target.checked);
-                      if (!e.target.checked) {
+                    onCheckedChange={(checked) => {
+                      setEnableVariations(checked);
+                      if (!checked) {
                         setVariations([]);
                       }
                     }}
@@ -1166,7 +1186,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                               updated[vIdx].name = e.target.value;
                               setVariations(updated);
                             }}
-                            className="bg-gray-900 border-gray-700 text-white"
+                            className="bg-[#111827] border-gray-800 text-white"
                           />
                         </div>
                         <Button
@@ -1196,7 +1216,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                                 updated[vIdx].values[valIdx].name = e.target.value;
                                 setVariations(updated);
                               }}
-                              className="flex-1 bg-gray-900 border-gray-700 text-white text-sm"
+                              className="flex-1 bg-[#111827] border-gray-800 text-white text-sm"
                             />
                             <Input
                               type="number"
@@ -1209,7 +1229,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                                 updated[vIdx].values[valIdx].additionalPrice = parseFloat(e.target.value) || 0;
                                 setVariations(updated);
                               }}
-                              className="w-24 bg-gray-900 border-gray-700 text-white text-sm"
+                              className="w-24 bg-[#111827] border-gray-800 text-white text-sm"
                             />
                             <Input
                               type="text"
@@ -1220,7 +1240,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                                 updated[vIdx].values[valIdx].subSku = e.target.value;
                                 setVariations(updated);
                               }}
-                              className="w-32 bg-gray-900 border-gray-700 text-white text-sm"
+                              className="w-32 bg-[#111827] border-gray-800 text-white text-sm"
                             />
                             <Button
                               type="button"
@@ -1295,7 +1315,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                     min="0"
                     value={formData.initial_stock || 0}
                     onChange={(e) => setFormData({ ...formData, initial_stock: parseInt(e.target.value) || 0 })}
-                    className="bg-gray-800 border-gray-700 text-white"
+                    className="bg-[#111827] border-gray-800 text-white"
                   />
                 </div>
 
@@ -1306,7 +1326,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                     min="0"
                     value={formData.alert_quantity || 0}
                     onChange={(e) => setFormData({ ...formData, alert_quantity: parseInt(e.target.value) || 0 })}
-                    className="bg-gray-800 border-gray-700 text-white"
+                    className="bg-[#111827] border-gray-800 text-white"
                   />
                 </div>
               </div>
@@ -1321,7 +1341,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
                     type="date"
                     value={formData.opening_stock_date || ''}
                     onChange={(e) => setFormData({ ...formData, opening_stock_date: e.target.value })}
-                    className="bg-gray-800 border-gray-700 text-white"
+                    className="bg-[#111827] border-gray-800 text-white"
                     required={isEditMode && formData.initial_stock > 0}
                   />
                   <p className="text-gray-400 text-xs mt-1">
@@ -1333,29 +1353,27 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
               <div className="flex items-center gap-2">
                 <Switch
                   checked={formData.enable_tracking}
-                  onChange={(e) => setFormData({ ...formData, enable_tracking: e.target.checked })}
+                  onCheckedChange={(checked) => setFormData({ ...formData, enable_tracking: checked })}
                 />
                 <Label className="text-white">Enable Tracking</Label>
               </div>
             </div>
           </div>
 
-          {/* Action Buttons */}
-          <div className="flex items-center justify-end gap-3 pt-6 border-t border-gray-800">
-            <Button type="button" variant="ghost" onClick={onClose || (() => router.back())}>
-              Cancel
-            </Button>
-            <Button type="submit" isLoading={loading} className="bg-blue-600 hover:bg-blue-500 text-white">
-              Save Product
-            </Button>
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-3 pt-6 border-t border-gray-800">
+                <Button type="button" variant="ghost" onClick={onClose || (() => router.back())}>
+                  Cancel
+                </Button>
+                <Button type="submit" isLoading={loading} className="bg-blue-600 hover:bg-blue-500 text-white">
+                  Save Product
+                </Button>
+              </div>
+            </form>
           </div>
-        </form>
-
-        {/* Help Icon */}
-        <button className="fixed bottom-6 right-6 p-3 bg-gray-800 hover:bg-gray-700 rounded-full text-gray-400 hover:text-white transition-colors">
-          <HelpCircle size={20} />
-        </button>
-      </div>
+        </div>
+      </SheetContent>
+    </Sheet>
 
       {/* Modals for adding new items */}
       <Dialog open={showCategoryModal} onOpenChange={setShowCategoryModal}>
@@ -1371,8 +1389,42 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
             parentCategoryId={formData.category_id > 0 ? formData.category_id : parentCategoryId}
             setParentCategoryId={setParentCategoryId}
             categories={categories}
-            onSave={async () => {
+            onSave={async (newCategoryId) => {
               await loadOptions();
+              
+              // Auto-select the newly created category/sub-category
+              if (newCategoryId) {
+                // Reload categories to get the new one
+                const { data: updatedCategories } = await supabase
+                  .from('categories')
+                  .select('id, name, parent_id')
+                  .order('name');
+                
+                if (updatedCategories) {
+                  setCategories(updatedCategories);
+                  
+                  // Find the new category
+                  const newCategory = updatedCategories.find(c => c.id === newCategoryId);
+                  if (newCategory) {
+                    if (newCategory.parent_id) {
+                      // It's a sub-category - set both category_id and sub_category_id
+                      setFormData(prev => ({
+                        ...prev,
+                        category_id: newCategory.parent_id!,
+                        sub_category_id: newCategoryId
+                      }));
+                    } else {
+                      // It's a main category - set category_id
+                      setFormData(prev => ({
+                        ...prev,
+                        category_id: newCategoryId,
+                        sub_category_id: 0
+                      }));
+                    }
+                  }
+                }
+              }
+              
               setShowCategoryModal(false);
               setCategoryName('');
               setParentCategoryId(null);
@@ -1435,7 +1487,7 @@ export function AddProductForm({ onClose, onSuccess, productId }: AddProductForm
           />
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }
 

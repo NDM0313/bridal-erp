@@ -37,6 +37,7 @@ import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { ensureDefaultResourcesExist } from '@/lib/services/businessSetupService';
+import { useBranchV2 } from '@/lib/context/BranchContextV2';
 
 interface DashboardStats {
   totalBalance: number;
@@ -89,8 +90,8 @@ const StatCard = ({ title, value, icon: Icon, color, bgGradient, loading, trend,
     <div
       onClick={onClick}
       className={cn(
-        'relative overflow-hidden p-5 rounded-xl border border-gray-800 bg-gray-900 transition-all duration-300',
-        onClick && 'cursor-pointer hover:border-blue-500/50 hover:-translate-y-1 hover:shadow-xl'
+        'relative overflow-hidden p-5 rounded-xl border border-gray-800 bg-gray-900 transition-standard animate-entrance',
+        onClick && 'cursor-pointer hover-lift hover:border-blue-500/50'
       )}
     >
       {/* Background Graphic */}
@@ -121,6 +122,8 @@ const StatCard = ({ title, value, icon: Icon, color, bgGradient, loading, trend,
 
 export function ModernDashboardHome() {
   const router = useRouter();
+  const { activeBranch } = useBranchV2();
+  const activeBranchId = activeBranch?.id ? Number(activeBranch.id) : null;
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<DashboardStats>({
     totalBalance: 0,
@@ -143,8 +146,33 @@ export function ModernDashboardHome() {
   const [lowStockItems, setLowStockItems] = useState<Array<{ id: number; name: string; sku: string; stock: number; min_level: number }>>([]);
 
   useEffect(() => {
-    loadDashboardData();
-  }, []);
+    // CRITICAL: Always load dashboard data once branch context is ready
+    // activeBranchId can be 'ALL' or a specific branch ID
+    if (activeBranchId !== null && activeBranchId !== undefined) {
+      loadDashboardData();
+    } else if (!loading) {
+      // Only set empty state if branch context is done loading
+      setStats({
+        totalBalance: 0,
+        activeRentals: 0,
+        activeProduction: 0,
+        pendingTasks: 0,
+        totalReceivables: 0,
+        totalPayables: 0,
+        netProfit: 0,
+        totalSales: 0,
+        productionInDyeing: 0,
+        productionReady: 0,
+        receivablesTrend: 0,
+        payablesTrend: 0,
+        profitTrend: 0,
+        salesTrend: 0,
+      });
+      setRecentActivities([]);
+      setLowStockItems([]);
+      setLoading(false);
+    }
+  }, [activeBranchId]);
 
   const loadDashboardData = async () => {
     try {
@@ -173,6 +201,16 @@ export function ModernDashboardHome() {
       ensureDefaultResourcesExist().catch((err) => {
         console.error('Failed to ensure default resources:', err);
         // Don't show error to user - this is a background operation
+      });
+
+      // CRITICAL: Handle 'ALL' locations vs specific branch
+      const isAllLocations = activeBranchId === 'ALL';
+      const branchIdNum = isAllLocations ? null : (activeBranchId ? Number(activeBranchId) : null);
+      console.log('🔍 BRANCH FILTER [ModernDashboardHome.loadDashboardData]', { 
+        activeBranchId, 
+        isAllLocations, 
+        branchIdNum, 
+        type: typeof branchIdNum 
       });
 
       // Parallel fetch all stats - using Supabase directly to avoid API errors
@@ -208,31 +246,39 @@ export function ModernDashboardHome() {
             if (error) throw error;
             return { data: { success: true, data: data || [] } };
           }),
-        // Fetch low stock items from Supabase
-        supabase
-          .from('variation_location_details')
-          .select(`
-            variation_id,
-            qty_available,
-            variations:variation_id (
-              product_id,
-              products:product_id (
-                name,
-                alert_quantity
+        // Fetch low stock items from Supabase - CRITICAL: Filter by active branch OR all locations
+        (async () => {
+          let query = supabase
+            .from('variation_location_details')
+            .select(`
+              variation_id,
+              qty_available,
+              location_id,
+              variations:variation_id (
+                product_id,
+                products:product_id (
+                  name,
+                  alert_quantity
+                )
               )
-            )
-          `)
-          .eq('location_id', profile.business_id) // Adjust based on your location logic
-          .then(({ data, error }) => {
-            if (error) throw error;
-            // Filter low stock items
-            const lowStock = (data || []).filter((item: any) => {
-              const qty = parseFloat(item.qty_available?.toString() || '0');
-              const alertQty = parseFloat(item.variations?.products?.alert_quantity?.toString() || '0');
-              return qty <= alertQty;
-            });
-            return { data: { success: true, data: lowStock } };
-          }),
+            `);
+          
+          // CRITICAL: Only filter by location if NOT "All Locations"
+          if (branchIdNum !== null) {
+            query = query.eq('location_id', branchIdNum);
+          }
+          
+          const { data, error } = await query;
+          if (error) throw error;
+          
+          // Filter low stock items
+          const lowStock = (data || []).filter((item: any) => {
+            const qty = parseFloat(item.qty_available?.toString() || '0');
+            const alertQty = parseFloat(item.variations?.products?.alert_quantity?.toString() || '0');
+            return qty <= alertQty;
+          });
+          return { data: { success: true, data: lowStock } };
+        })(),
       ]);
 
       // Process accounts
@@ -347,17 +393,30 @@ export function ModernDashboardHome() {
 
       // Process low stock items
       if (inventoryResult.status === 'fulfilled' && inventoryResult.value.data?.success) {
-        const inventory = inventoryResult.value.data.data?.data || [];
-        const lowStock = inventory
-          .filter((item: any) => item.isLowStock)
-          .map((item: any) => ({
-            id: item.product_id || item.id,
-            name: item.product_name || item.name,
-            sku: item.sku,
-            stock: item.current_stock || item.stock || 0,
-            min_level: item.min_stock_level || item.alert_quantity || 0,
-          }));
-        setLowStockItems(lowStock);
+        const inventory = inventoryResult.value.data.data || [];
+        const lowStock = inventory.map((item: any) => {
+          const variation = item.variations;
+          const product = variation?.products;
+          return {
+            id: variation?.product_id || item.variation_id || item.id,
+            name: product?.name || 'Unknown Product',
+            sku: variation?.sub_sku || 'N/A',
+            stock: parseFloat(item.qty_available?.toString() || '0'),
+            min_level: parseFloat(product?.alert_quantity?.toString() || '0'),
+          };
+        });
+        
+        // Filter out duplicate IDs to ensure data integrity
+        const seenIds = new Set<number>();
+        const uniqueLowStock = lowStock.filter((item) => {
+          if (seenIds.has(item.id)) {
+            return false; // Skip duplicate
+          }
+          seenIds.add(item.id);
+          return true;
+        });
+        
+        setLowStockItems(uniqueLowStock);
       }
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
@@ -417,7 +476,7 @@ export function ModernDashboardHome() {
 
       {/* Low Stock Alert Banner */}
       {lowStockItems.length > 0 && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center justify-between">
+        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center justify-between transition-standard animate-entrance">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-red-500/20 rounded-lg text-red-500">
               <AlertTriangle size={20} strokeWidth={2} />
@@ -443,7 +502,7 @@ export function ModernDashboardHome() {
         {/* Production Status Card */}
         <div
           onClick={() => router.push('/dashboard/studio')}
-          className="bg-gray-900 border border-gray-800 rounded-xl p-5 relative overflow-hidden cursor-pointer hover:border-purple-500/50 hover:-translate-y-1 hover:shadow-xl transition-all"
+          className="bg-gray-900 border border-gray-800 rounded-xl p-5 relative overflow-hidden cursor-pointer hover-lift hover:border-purple-500/50 transition-standard animate-entrance"
         >
           <div className="absolute top-0 right-0 p-3 opacity-10">
             <Scissors size={64} className="text-purple-500" strokeWidth={1} />
@@ -480,58 +539,66 @@ export function ModernDashboardHome() {
         </div>
 
         {/* Total Due (Receivables) Card */}
-        <StatCard
-          title="Total Due (Receivables)"
-          value={formatCurrency(stats.totalReceivables)}
-          icon={ArrowDownRight}
-          color="text-blue-400"
-          bgGradient="bg-gradient-to-br from-blue-900/20 to-cyan-900/20 border-blue-500/30"
-          loading={loading}
-          trend={stats.receivablesTrend}
-          onClick={() => router.push('/dashboard/contacts')}
-        />
+        <div className="animate-entrance-delay-1">
+          <StatCard
+            title="Total Due (Receivables)"
+            value={formatCurrency(stats.totalReceivables)}
+            icon={ArrowDownRight}
+            color="text-blue-400"
+            bgGradient="bg-gradient-to-br from-blue-900/20 to-cyan-900/20 border-blue-500/30"
+            loading={loading}
+            trend={stats.receivablesTrend}
+            onClick={() => router.push('/dashboard/contacts')}
+          />
+        </div>
 
         {/* Supplier Due (Payables) Card */}
-        <StatCard
-          title="Supplier Due (Payables)"
-          value={formatCurrency(stats.totalPayables)}
-          icon={ArrowUpRight}
-          color="text-orange-400"
-          bgGradient="bg-gradient-to-br from-orange-900/20 to-red-900/20 border-orange-500/30"
-          loading={loading}
-          trend={stats.payablesTrend}
-          onClick={() => router.push('/purchases')}
-        />
+        <div className="animate-entrance-delay-2">
+          <StatCard
+            title="Supplier Due (Payables)"
+            value={formatCurrency(stats.totalPayables)}
+            icon={ArrowUpRight}
+            color="text-orange-400"
+            bgGradient="bg-gradient-to-br from-orange-900/20 to-red-900/20 border-orange-500/30"
+            loading={loading}
+            trend={stats.payablesTrend}
+            onClick={() => router.push('/purchases')}
+          />
+        </div>
 
         {/* Net Profit Card */}
-        <StatCard
-          title="Net Profit"
-          value={formatCurrency(stats.netProfit)}
-          icon={DollarSign}
-          color="text-green-400"
-          bgGradient="bg-gradient-to-br from-green-900/20 to-emerald-900/20 border-green-500/30"
-          loading={loading}
-          trend={stats.profitTrend}
-          onClick={() => router.push('/dashboard/finance')}
-        />
+        <div className="animate-entrance-delay-3">
+          <StatCard
+            title="Net Profit"
+            value={formatCurrency(stats.netProfit)}
+            icon={DollarSign}
+            color="text-green-400"
+            bgGradient="bg-gradient-to-br from-green-900/20 to-emerald-900/20 border-green-500/30"
+            loading={loading}
+            trend={stats.profitTrend}
+            onClick={() => router.push('/dashboard/finance')}
+          />
+        </div>
 
         {/* Total Sales Card */}
-        <StatCard
-          title="Total Sales"
-          value={formatCurrency(stats.totalSales)}
-          icon={ShoppingBag}
-          color="text-purple-400"
-          bgGradient="bg-gradient-to-br from-purple-900/20 to-pink-900/20 border-purple-500/30"
-          loading={loading}
-          trend={stats.salesTrend}
-          onClick={() => router.push('/dashboard/sales')}
-        />
+        <div className="animate-entrance-delay-3">
+          <StatCard
+            title="Total Sales"
+            value={formatCurrency(stats.totalSales)}
+            icon={ShoppingBag}
+            color="text-purple-400"
+            bgGradient="bg-gradient-to-br from-purple-900/20 to-pink-900/20 border-purple-500/30"
+            loading={loading}
+            trend={stats.salesTrend}
+            onClick={() => router.push('/dashboard/sales')}
+          />
+        </div>
       </div>
 
       {/* Charts and Critical Stock Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Revenue & Profit Chart */}
-        <div className="lg:col-span-2 bg-gray-900 border border-gray-800 rounded-xl p-6">
+        <div className="lg:col-span-2 bg-gray-900 border border-gray-800 rounded-xl p-6 transition-standard hover-lift animate-entrance-delay-1">
           <h3 className="text-lg font-bold text-white mb-4">Revenue & Profit</h3>
           <div className="h-64 flex items-center justify-center text-gray-500">
             <p className="text-sm">Chart placeholder - Integrate Recharts AreaChart here</p>
@@ -539,7 +606,7 @@ export function ModernDashboardHome() {
         </div>
 
         {/* Critical Stock Widget */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 transition-standard hover-lift animate-entrance-delay-2">
           <div className="flex items-center gap-2 mb-4">
             <AlertTriangle className="text-red-500" size={20} strokeWidth={2} />
             <h3 className="text-base font-bold text-white">Critical Stock</h3>
@@ -548,8 +615,8 @@ export function ModernDashboardHome() {
             <p className="text-gray-500 text-sm">No critical stock items</p>
           ) : (
             <div className="space-y-3">
-              {lowStockItems.slice(0, 3).map((item) => (
-                <div key={item.id} className="flex items-center justify-between text-sm">
+              {lowStockItems.slice(0, 3).map((item, index) => (
+                <div key={`${item.id}-${index}`} className="flex items-center justify-between text-sm">
                   <div className="flex-1 min-w-0">
                     <p className="text-white font-medium truncate">{item.name}</p>
                     <p className="text-gray-500 text-xs">{item.sku}</p>
@@ -576,7 +643,7 @@ export function ModernDashboardHome() {
       </div>
 
       {/* Recent Activity Feed */}
-      <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl overflow-hidden">
+      <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-2xl overflow-hidden transition-standard hover-lift animate-entrance-delay-3">
         <div className="p-6 border-b border-gray-800">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-bold text-white">Recent Activity</h2>

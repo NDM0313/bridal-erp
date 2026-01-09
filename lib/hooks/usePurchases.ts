@@ -3,6 +3,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/utils/supabase/client';
 import { toast } from 'sonner';
+import { useBranchV2 } from '@/lib/context/BranchContextV2';
 
 interface Purchase {
   id: number;
@@ -28,9 +29,15 @@ interface PurchasesQueryResult {
  * Implements stale-while-revalidate pattern
  */
 export function usePurchases() {
+  const { activeBranch } = useBranchV2();
+  const activeBranchId = activeBranch?.id ? Number(activeBranch.id) : null;
+
   return useQuery<PurchasesQueryResult>({
-    queryKey: ['purchases'],
+    queryKey: ['purchases', activeBranchId],
+    enabled: !!activeBranchId,
     queryFn: async () => {
+      console.log('🔍 BRANCH FILTER [usePurchases]', { activeBranchId, type: typeof activeBranchId });
+      
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Authentication required');
 
@@ -42,13 +49,31 @@ export function usePurchases() {
 
       if (!profile?.business_id) throw new Error('Business not found');
 
-      // Fetch purchases
-      const { data: transactions, error: transactionsError } = await supabase
+      if (!activeBranchId) {
+        // Return empty data if no branch selected
+        return {
+          purchases: [],
+          stats: {
+            totalPurchases: 0,
+            totalValue: 0,
+          },
+        };
+      }
+
+      // Fetch purchases - FILTER BY BRANCH
+      let query = supabase
         .from('transactions')
-        .select('id, invoice_no, transaction_date, final_total, payment_status, contact_id, status')
+        .select('id, invoice_no, transaction_date, final_total, payment_status, contact_id, status, location_id')
         .eq('business_id', profile.business_id)
         .eq('type', 'purchase')
-        .in('status', ['final', 'draft'])
+        .in('status', ['final', 'draft', 'cancelled']);
+
+      // CRITICAL: Filter by active branch (ensure it's a number)
+      const branchIdNum = Number(activeBranchId);
+      console.log('🔍 BRANCH FILTER [usePurchases] Applying filter', { branchIdNum, type: typeof branchIdNum });
+      query = query.eq('location_id', branchIdNum);
+
+      const { data: transactions, error: transactionsError } = await query
         .order('transaction_date', { ascending: false })
         .limit(100);
 

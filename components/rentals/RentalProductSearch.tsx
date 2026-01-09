@@ -157,7 +157,7 @@ export const RentalProductSearch = ({ onSelect, selectedProduct, onAddProduct }:
       }
 
       // Map products to SearchProduct format
-      const mappedProducts: SearchProduct[] = productsData.map((product: Product) => {
+      const mappedProducts: SearchProduct[] = productsData.map((product: any) => {
         const details = productDetailsMap.get(product.id) || {};
         
         let status: SearchProduct['status'] = 'available';

@@ -207,6 +207,9 @@ export function requirePermission(action) {
       'audit.view': ['admin', 'manager', 'auditor'],
       'business.manage': ['admin'],
       'users.manage': ['admin'],
+      // Production worker permissions
+      'worker.steps.view': ['production_worker', 'admin', 'manager'],
+      'worker.steps.update': ['production_worker', 'admin', 'manager'],
     };
 
     const requiredRoles = permissionMap[action] || [];

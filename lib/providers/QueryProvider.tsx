@@ -22,8 +22,8 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
         refetchOnReconnect: true, // Refetch when internet reconnects
         retry: 1, // Retry failed requests once
         refetchOnMount: false, // Don't refetch on mount if data is fresh - show cached data instantly
-        // Always show cached data first, then update in background
-        placeholderData: (previousData) => previousData,
+        // Always show cached data first, then update in background      
+        placeholderData: (previousData: any) => previousData,
       },
       mutations: {
         // Optimistic updates: Update UI immediately, rollback on error

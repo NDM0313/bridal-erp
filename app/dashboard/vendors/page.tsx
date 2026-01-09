@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, MoreVertical, Phone, Mail, User, Edit, Trash2, Loader2, Search, MapPin, Filter } from 'lucide-react';
 import { ModernDashboardLayout } from '@/components/layout/ModernDashboardLayout';
@@ -12,6 +12,8 @@ import { DropdownMenu, DropdownMenuItem } from '@/components/ui/DropdownMenu';
 import { Skeleton } from '@/components/placeholders/SkeletonLoader';
 import { EmptyState } from '@/components/placeholders/EmptyState';
 import { QuickAddContactModal, Contact } from '@/components/rentals/QuickAddContactModal';
+import { SortableTableHeader, SortDirection } from '@/components/ui/SortableTableHeader';
+import { FilterDropdown, FilterOptions } from '@/components/ui/FilterDropdown';
 import { supabase } from '@/utils/supabase/client';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -29,6 +31,8 @@ export default function VendorsPage() {
   const [error, setError] = useState<string | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: SortDirection }>({ key: '', direction: null });
+  const [filters, setFilters] = useState<FilterOptions>({});
 
   // Fetch vendors from Supabase
   const fetchVendors = async () => {
@@ -119,19 +123,68 @@ export default function VendorsPage() {
     // TODO: Open edit modal
   };
 
+  // Handle sorting
+  const handleSort = (key: string) => {
+    setSortConfig((prev) => {
+      if (prev.key === key) {
+        // Toggle direction: null -> asc -> desc -> null
+        if (prev.direction === null) return { key, direction: 'asc' };
+        if (prev.direction === 'asc') return { key, direction: 'desc' };
+        return { key: '', direction: null };
+      }
+      return { key, direction: 'asc' };
+    });
+  };
+
+  // Filter and sort vendors
+  const filteredVendors = useMemo(() => {
+    let result = [...vendors];
+
+    // Apply search filter
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      result = result.filter(
+        (vendor) =>
+          vendor.name.toLowerCase().includes(term) ||
+          getVendorRole(vendor).toLowerCase().includes(term) ||
+          vendor.mobile?.toLowerCase().includes(term) ||
+          vendor.email?.toLowerCase().includes(term)
+      );
+    }
+
+    // Apply sorting
+    if (sortConfig.key && sortConfig.direction) {
+      result.sort((a, b) => {
+        let aVal: any = a[sortConfig.key as keyof Vendor];
+        let bVal: any = b[sortConfig.key as keyof Vendor];
+
+        if (sortConfig.key === 'name') {
+          aVal = (aVal || '').toLowerCase();
+          bVal = (bVal || '').toLowerCase();
+        }
+
+        if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    return result;
+  }, [vendors, searchTerm, sortConfig]);
+
   return (
     <ModernDashboardLayout>
-      <div className="space-y-6 p-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
+      <div className="space-y-6 p-6 standard-page-container">
+        {/* Header - Standardized */}
+        <div className="flex items-center justify-between mb-8 animate-entrance">
           <div>
-            <h1 className="text-2xl font-bold text-white">Vendor Management</h1>
-            <p className="text-sm text-gray-400 mt-1">Manage your dyers, tailors, and material suppliers.</p>
+            <h1 className="text-2xl font-semibold text-indigo-400 mb-1">Vendors</h1>
+            <p className="text-sm text-slate-400">Manage your dyers, tailors, and material suppliers</p>
           </div>
           <Button
             variant="primary"
             onClick={() => setIsAddModalOpen(true)}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white"
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white transition-standard"
           >
             <Plus size={18} />
             Add Vendor
@@ -139,20 +192,24 @@ export default function VendorsPage() {
         </div>
 
         {/* Search and Filter */}
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+        <div className="h-14 flex items-center gap-3">
+          <div className="search-bar-container flex-1">
+            <Search className="search-icon" size={18} />
             <Input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Search vendors..."
-              className="bg-gray-800 border-gray-700 text-white pl-10"
+              className="search-input w-full bg-[#111827] border-slate-800 text-slate-200 placeholder:text-slate-500 focus:ring-2 focus:ring-indigo-500/50 transition-standard rounded-xl"
             />
           </div>
-          <Button variant="outline" className="bg-gray-800 border-gray-700 text-white hover:bg-gray-700">
-            <Filter size={18} />
-          </Button>
+          <FilterDropdown
+            onFilterChange={(f) => setFilters(f)}
+            activeFilters={filters}
+            showDateRange={false}
+            showStatus={false}
+            showCategory={false}
+          />
         </div>
 
         {/* Table */}
@@ -182,26 +239,26 @@ export default function VendorsPage() {
             />
           </div>
         ) : (
-          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/50 rounded-xl overflow-hidden transition-standard animate-entrance-delay-2">
             <Table>
               <TableHeader>
-                <TableRow className="bg-gray-800/50">
-                  <TableHead className="text-gray-400">Vendor Name</TableHead>
-                  <TableHead className="text-gray-400">Service Type</TableHead>
-                  <TableHead className="text-gray-400">Contact</TableHead>
-                  <TableHead className="text-gray-400">Location</TableHead>
-                  <TableHead className="text-gray-400">Active Orders</TableHead>
-                  <TableHead className="text-gray-400">Status</TableHead>
-                  <TableHead className="text-right text-gray-400">Actions</TableHead>
+                <TableRow className="bg-slate-800/50">
+                  <SortableTableHeader
+                    columnKey="name"
+                    label="Vendor Name"
+                    currentSort={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <TableHead className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Service Type</TableHead>
+                  <TableHead className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Contact</TableHead>
+                  <TableHead className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Location</TableHead>
+                  <TableHead className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Active Orders</TableHead>
+                  <TableHead className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Status</TableHead>
+                  <TableHead className="text-right text-xs font-semibold text-slate-400 uppercase tracking-wider">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {vendors
-                  .filter((vendor) =>
-                    vendor.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                    getVendorRole(vendor).toLowerCase().includes(searchTerm.toLowerCase())
-                  )
-                  .map((vendor) => {
+                {filteredVendors.map((vendor) => {
                     // Mock active orders count (should come from API)
                     const activeOrders = Math.floor(Math.random() * 15);
                     const isBusy = activeOrders > 10;
@@ -212,7 +269,7 @@ export default function VendorsPage() {
                     return (
                       <TableRow
                         key={vendor.id}
-                        className="hover:bg-gray-800/30 transition-colors"
+                        className="hover:bg-gray-800/30 transition-standard"
                       >
                         {/* Vendor Name */}
                         <TableCell>
@@ -267,7 +324,7 @@ export default function VendorsPage() {
 
                         {/* Actions */}
                         <TableCell className="text-right">
-                          <button className="p-1 rounded hover:bg-gray-800 text-gray-400 hover:text-white transition-colors">
+                          <button className="p-1 rounded hover:bg-gray-800 text-gray-400 hover:text-white transition-standard">
                             <MoreVertical size={18} />
                           </button>
                         </TableCell>

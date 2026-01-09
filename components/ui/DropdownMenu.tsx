@@ -102,7 +102,7 @@ export const DropdownMenu = ({ children, trigger }: DropdownMenuProps) => {
         <>
           {/* Backdrop to cover other elements and hide other 3-dots buttons */}
           <div
-            className="fixed inset-0 z-[999]"
+            className="fixed inset-0 z-[9998]"
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -120,17 +120,24 @@ export const DropdownMenu = ({ children, trigger }: DropdownMenuProps) => {
           {/* Dropdown menu - rendered via portal */}
           <div 
             ref={dropdownRef}
-            className="fixed w-48 bg-gray-900 border border-gray-800 rounded-lg shadow-xl z-[1000] overflow-hidden"
+            className="fixed w-48 bg-gray-900 border border-gray-800 rounded-lg shadow-xl z-[9999] overflow-hidden"
             style={{ 
               ...getDropdownPosition(),
-              zIndex: 1000
+              zIndex: 9999
             }}
             onClick={(e) => {
               e.stopPropagation();
               // Close menu if clicking on a menu item (event delegation)
               const target = e.target as HTMLElement;
               if (target.closest('[data-menu-item]')) {
-                setTimeout(() => closeMenu(), 150);
+                // Close immediately for Edit action to prevent backdrop interference
+                const menuItem = target.closest('[data-menu-item]');
+                const isEditAction = menuItem?.textContent?.includes('Edit');
+                if (isEditAction) {
+                  closeMenu(); // Close immediately, no delay
+                } else {
+                  setTimeout(() => closeMenu(), 150);
+                }
               }
             }}
             onMouseDown={(e) => {

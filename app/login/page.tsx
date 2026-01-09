@@ -76,26 +76,49 @@ export default function LoginPage() {
             .single();
 
           if (!orgUser) {
-            // User doesn't have organization - create one
-            // console.log('🏢 User has no organization - creating one...');
-            const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1';
+            // User doesn't have organization - create one (non-blocking)
+            // Only attempt if API URL is configured
+            const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
             
-            const orgResponse = await fetch(`${API_BASE_URL}/onboarding/create-organization`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentSession.access_token}`,
-              },
-              body: JSON.stringify({
-                name: result.user.email?.split('@')[0] + ' Organization' || 'My Organization',
-                slug: result.user.email?.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '-') || 'my-org',
-              }),
-            });
+            if (API_BASE_URL) {
+              try {
+                // Use AbortController for timeout
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+                
+                const orgResponse = await fetch(`${API_BASE_URL}/onboarding/create-organization`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${currentSession.access_token}`,
+                  },
+                  body: JSON.stringify({
+                    name: result.user.email?.split('@')[0] + ' Organization' || 'My Organization',
+                    slug: result.user.email?.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '-') || 'my-org',
+                  }),
+                  signal: controller.signal,
+                });
 
-            if (orgResponse.ok) {
-              // console.log('✅ Organization created automatically after login');
+                clearTimeout(timeoutId);
+
+                if (orgResponse.ok) {
+                  console.log('✅ Organization created automatically after login');
+                } else {
+                  console.warn('⚠️ Failed to create organization automatically:', orgResponse.status, orgResponse.statusText);
+                }
+              } catch (fetchError: any) {
+                // Silently fail - don't block login if organization creation fails
+                if (fetchError.name === 'AbortError') {
+                  console.warn('⚠️ Organization creation timed out (API server may not be running)');
+                } else if (fetchError.message?.includes('Failed to fetch')) {
+                  console.warn('⚠️ Organization creation failed: API server not accessible. Login will continue.');
+                } else {
+                  console.warn('⚠️ Organization creation failed:', fetchError.message || fetchError);
+                }
+                // Don't throw - allow login to proceed
+              }
             } else {
-              console.warn('⚠️ Failed to create organization automatically');
+              console.warn('⚠️ NEXT_PUBLIC_API_URL not configured - skipping organization creation');
             }
           }
         }

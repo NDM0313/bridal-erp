@@ -11,6 +11,7 @@ import { ProductionOrder } from '@/lib/types/modern-erp';
 import apiClient, { getErrorMessage, ApiResponse } from '@/lib/api/apiClient';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { supabase } from '@/utils/supabase/client';
 
 interface CreateOrderModalProps {
   isOpen: boolean;
@@ -47,16 +48,75 @@ export const CreateOrderModal = ({ isOpen, onClose, onSuccess }: CreateOrderModa
   const [measurements, setMeasurements] = useState<Measurements>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Reset form when modal opens/closes
+  // Auto-generate project number when modal opens
   useEffect(() => {
-    if (isOpen) {
-      setSelectedCustomer(null);
-      setOrderNo('');
-      setDeadline(undefined);
-      setMeasurements({});
-      setIsSubmitting(false);
+    if (isOpen && !orderNo) {
+      const generateProjectNumber = async () => {
+        try {
+          // Load project settings from localStorage
+          const storedSettings = localStorage.getItem('studio_rently_settings');
+          const settings = storedSettings ? JSON.parse(storedSettings) : null;
+          
+          const projectSettings = {
+            project_prefix: settings?.project_prefix || 'STU',
+            project_format: settings?.project_format || 'long',
+            project_custom_format: settings?.project_custom_format || '',
+          };
+
+          // Get business_id to find last project number
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session) return;
+
+          const { data: profile } = await supabase
+            .from('user_profiles')
+            .select('business_id')
+            .eq('user_id', session.user.id)
+            .single();
+
+          if (!profile?.business_id) return;
+
+          // Find the last production order to get the next sequence
+          const prefix = projectSettings.project_prefix || 'STU';
+          let searchPattern = `${prefix}-%`;
+          
+          if (projectSettings.project_format === 'long') {
+            const year = new Date().getFullYear();
+            searchPattern = `${prefix}-${year}-%`;
+          }
+
+          const { data: lastOrder } = await supabase
+            .from('production_orders')
+            .select('order_no')
+            .eq('business_id', profile.business_id)
+            .like('order_no', searchPattern)
+            .order('order_no', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          // Extract sequence number from last order
+          let sequence = 1;
+          if (lastOrder?.order_no) {
+            const parts = lastOrder.order_no.split('-');
+            const lastSeq = parts[parts.length - 1];
+            sequence = parseInt(lastSeq) + 1;
+          }
+
+          // Generate project number using utility
+          const { generateProjectNumber } = await import('@/lib/utils/invoiceGenerator');
+          const generatedNumber = generateProjectNumber(projectSettings, sequence, new Date());
+          setOrderNo(generatedNumber);
+        } catch (err) {
+          console.error('Failed to generate project number:', err);
+          // Fallback to default format
+          const date = new Date();
+          const year = date.getFullYear();
+          setOrderNo(`STU-${year}-0001`);
+        }
+      };
+
+      generateProjectNumber();
     }
-  }, [isOpen]);
+  }, [isOpen, orderNo]);
 
   // Update measurement value
   const updateMeasurement = (key: keyof Measurements, value: string) => {
@@ -168,14 +228,14 @@ export const CreateOrderModal = ({ isOpen, onClose, onSuccess }: CreateOrderModa
 
           {/* Order Info */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Order / Design No */}
+            {/* Project No */}
             <div className="space-y-2">
-              <Label className="text-xs text-gray-400 uppercase">Order / Design No</Label>
+              <Label className="text-xs text-gray-400 uppercase">Project No.</Label>
               <Input
                 type="text"
                 value={orderNo}
                 onChange={(e) => setOrderNo(e.target.value)}
-                placeholder="e.g., DS-2024-001"
+                placeholder="Auto-generated"
                 className="h-10 bg-gray-800 border-gray-700 text-white placeholder:text-gray-600"
               />
             </div>

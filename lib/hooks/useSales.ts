@@ -3,6 +3,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/utils/supabase/client';
 import { toast } from 'sonner';
+import { useBranchV2 } from '@/lib/context/BranchContextV2';
 
 interface Sale {
   id: number;
@@ -15,6 +16,9 @@ interface Sale {
   customer_name?: string;
   paid_amount?: number;
   due_amount?: number;
+  location_id?: number;
+  branch_name?: string;
+  branch_code?: string;
 }
 
 interface SalesQueryResult {
@@ -31,9 +35,15 @@ interface SalesQueryResult {
  * Implements stale-while-revalidate pattern
  */
 export function useSales() {
+  const { activeBranch } = useBranchV2();
+  const activeBranchId = activeBranch?.id ? Number(activeBranch.id) : null;
+
   return useQuery<SalesQueryResult>({
-    queryKey: ['sales'],
+    queryKey: ['sales', activeBranchId],
+    enabled: !!activeBranchId,
     queryFn: async () => {
+      console.log('🔍 BRANCH FILTER [useSales]', { activeBranchId, type: typeof activeBranchId });
+      
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Authentication required');
 
@@ -45,13 +55,32 @@ export function useSales() {
 
       if (!profile?.business_id) throw new Error('Business not found');
 
-      // Fetch transactions
-      const { data: transactions, error: transactionsError } = await supabase
+      if (!activeBranchId) {
+        // Return empty data if no branch selected
+        return {
+          sales: [],
+          stats: {
+            totalSales: 0,
+            todaySales: 0,
+            monthlyRevenue: 0,
+          },
+        };
+      }
+
+      // Fetch transactions - FILTER BY BRANCH
+      let query = supabase
         .from('transactions')
-        .select('id, invoice_no, transaction_date, final_total, payment_status, contact_id, status')
+        .select('id, invoice_no, transaction_date, final_total, payment_status, contact_id, status, location_id')
         .eq('business_id', profile.business_id)
         .eq('type', 'sell')
-        .in('status', ['final', 'draft'])
+        .in('status', ['final', 'draft']);
+
+      // CRITICAL: Filter by active branch (ensure it's a number)
+      const branchIdNum = Number(activeBranchId);
+      console.log('🔍 BRANCH FILTER [useSales] Applying filter', { branchIdNum, type: typeof branchIdNum });
+      query = query.eq('location_id', branchIdNum);
+
+      const { data: transactions, error: transactionsError } = await query
         .order('transaction_date', { ascending: false })
         .limit(100);
 
@@ -72,6 +101,29 @@ export function useSales() {
         if (contacts) {
           contacts.forEach(c => {
             contactsMap.set(c.id, { id: c.id, name: c.name });
+          });
+        }
+      }
+
+      // Fetch branch/location information
+      const locationIds = (transactions || [])
+        .map(t => t.location_id)
+        .filter((id): id is number => id !== null && id !== undefined);
+
+      let locationsMap = new Map<number, { id: number; name: string; code: string }>();
+      if (locationIds.length > 0) {
+        const { data: locations } = await supabase
+          .from('business_locations')
+          .select('id, name, custom_field1')
+          .in('id', locationIds);
+
+        if (locations) {
+          locations.forEach(loc => {
+            locationsMap.set(loc.id, { 
+              id: loc.id, 
+              name: loc.name || 'Unknown Branch', 
+              code: loc.custom_field1 || '' 
+            });
           });
         }
       }
@@ -105,6 +157,7 @@ export function useSales() {
       const sales: Sale[] = (transactions || []).map(t => {
         const contact = t.contact_id ? contactsMap.get(t.contact_id) : null;
         const payment = paymentsMap.get(t.id) || { total_paid: 0, credit_due: t.final_total || 0 };
+        const location = t.location_id ? locationsMap.get(t.location_id) : null;
 
         return {
           id: t.id,
@@ -117,6 +170,9 @@ export function useSales() {
           customer_name: contact?.name || 'Walk-in Customer',
           paid_amount: payment.total_paid,
           due_amount: payment.credit_due,
+          location_id: t.location_id,
+          branch_name: location?.name,
+          branch_code: location?.code,
         };
       });
 
@@ -148,6 +204,8 @@ export function useSales() {
  */
 export function useCreateSale() {
   const queryClient = useQueryClient();
+  const { activeBranch } = useBranchV2();
+  const activeBranchId = activeBranch?.id ? Number(activeBranch.id) : null;
 
   return useMutation({
     mutationFn: async (saleData: any) => {
@@ -156,8 +214,8 @@ export function useCreateSale() {
       return saleData;
     },
     onSuccess: () => {
-      // Invalidate and refetch sales
-      queryClient.invalidateQueries({ queryKey: ['sales'] });
+      // CRITICAL FIX: Invalidate with branch ID to refetch correct branch data
+      queryClient.invalidateQueries({ queryKey: ['sales', activeBranchId] });
       toast.success('Sale created successfully');
     },
     onError: (err) => {
@@ -171,6 +229,8 @@ export function useCreateSale() {
  */
 export function useDeleteSale() {
   const queryClient = useQueryClient();
+  const { activeBranch } = useBranchV2();
+  const activeBranchId = activeBranch?.id ? Number(activeBranch.id) : null;
 
   return useMutation({
     mutationFn: async (saleId: number) => {
@@ -182,15 +242,15 @@ export function useDeleteSale() {
       if (error) throw error;
     },
     onMutate: async (saleId) => {
-      // Cancel outgoing refetches
-      await queryClient.cancelQueries({ queryKey: ['sales'] });
+      // CRITICAL FIX: Cancel with branch ID
+      await queryClient.cancelQueries({ queryKey: ['sales', activeBranchId] });
 
       // Snapshot previous value
-      const previousData = queryClient.getQueryData<SalesQueryResult>(['sales']);
+      const previousData = queryClient.getQueryData<SalesQueryResult>(['sales', activeBranchId]);
 
       // Optimistically update
       if (previousData) {
-        queryClient.setQueryData<SalesQueryResult>(['sales'], {
+        queryClient.setQueryData<SalesQueryResult>(['sales', activeBranchId], {
           ...previousData,
           sales: previousData.sales.filter(s => s.id !== saleId),
           stats: {
@@ -205,7 +265,7 @@ export function useDeleteSale() {
     onError: (err, saleId, context) => {
       // Rollback on error
       if (context?.previousData) {
-        queryClient.setQueryData(['sales'], context.previousData);
+        queryClient.setQueryData(['sales', activeBranchId], context.previousData);
       }
       toast.error('Failed to delete sale');
     },
@@ -213,8 +273,8 @@ export function useDeleteSale() {
       toast.success('Sale deleted successfully');
     },
     onSettled: () => {
-      // Refetch to ensure consistency
-      queryClient.invalidateQueries({ queryKey: ['sales'] });
+      // CRITICAL FIX: Refetch with branch ID
+      queryClient.invalidateQueries({ queryKey: ['sales', activeBranchId] });
     },
   });
 }

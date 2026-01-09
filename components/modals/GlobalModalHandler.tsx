@@ -132,41 +132,11 @@ export function GlobalModalHandler() {
       {/* Global Product Modal - Lazy loaded, only renders when open */}
       {modalStates.product && (
         <Suspense fallback={<ModalSkeleton />}>
-          <div 
-            className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4"
-            style={{
-              animation: 'fadeIn 0.15s ease-out',
-            }}
-            onClick={(e) => {
-              if (e.target === e.currentTarget) {
-                handlers.product.close();
-              }
-            }}
-          >
-            <div 
-              className="bg-[#111827] rounded-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto"
-              style={{
-                animation: 'slideInUp 0.2s ease-out',
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="p-6">
-                <div className="flex items-center justify-between mb-6">
-                  <h2 className="text-2xl font-bold text-white">Add New Product</h2>
-                  <button
-                    onClick={handlers.product.close}
-                    className="text-gray-400 hover:text-white transition-colors"
-                  >
-                    <X size={24} />
-                  </button>
-                </div>
-                <AddProductForm
-                  onSuccess={handlers.product.success}
-                  onClose={handlers.product.close}
-                />
-              </div>
-            </div>
-          </div>
+          <AddProductForm
+            isOpen={true}
+            onSuccess={handlers.product.success}
+            onClose={handlers.product.close}
+          />
         </Suspense>
       )}
 

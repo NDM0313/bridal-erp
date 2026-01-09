@@ -6,6 +6,8 @@ import {
   Package, Search, Filter, Download, RefreshCw, Warehouse, 
   TrendingUp, Plus, ArrowRightLeft, Settings2, Image as ImageIcon
 } from 'lucide-react';
+import { SortableTableHeader, SortDirection } from '@/components/ui/SortableTableHeader';
+import { FilterDropdown, FilterOptions } from '@/components/ui/FilterDropdown';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
@@ -125,6 +127,8 @@ export default function InventoryPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [adjustmentDrawerOpen, setAdjustmentDrawerOpen] = useState(false);
   const [transferDrawerOpen, setTransferDrawerOpen] = useState(false);
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' | null } | null>(null);
+  const [filters, setFilters] = useState<{ category?: string }>({});
 
   // Use React Query hook - instant cached data, background refresh
   const { data, isLoading, error, refetch } = useInventory();
@@ -143,26 +147,64 @@ export default function InventoryPage() {
     return uniqueCategories.map((name, idx) => ({ id: idx, name: name as string }));
   }, [inventory]);
 
-  // Memoized filtered inventory
+  // Handle sorting
+  const handleSort = useCallback((key: string) => {
+    setSortConfig((current) => {
+      if (current?.key === key) {
+        if (current.direction === 'asc') {
+          return { key, direction: 'desc' };
+        } else {
+          return null;
+        }
+      }
+      return { key, direction: 'asc' };
+    });
+  }, []);
+
+  // Memoized filtered and sorted inventory
   const filteredInventory = useMemo(() => {
     let filtered = inventory;
 
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       filtered = filtered.filter(item =>
-        item.product_name.toLowerCase().includes(term) ||
-        item.variation_name.toLowerCase().includes(term) ||
-        item.sku.toLowerCase().includes(term) ||
-        item.sub_sku.toLowerCase().includes(term)
+        item.product_name?.toLowerCase().includes(term) ||
+        item.variation_name?.toLowerCase().includes(term) ||
+        item.sku?.toLowerCase().includes(term) ||
+        item.sub_sku?.toLowerCase().includes(term)
       );
     }
 
-    if (selectedCategory !== 'all') {
+    if (filters.category && filters.category !== 'all') {
+      filtered = filtered.filter(item => item.category_name === filters.category);
+    } else if (selectedCategory !== 'all') {
       filtered = filtered.filter(item => item.category_name === selectedCategory);
     }
 
+    // Apply sorting
+    if (sortConfig) {
+      filtered.sort((a, b) => {
+        let aVal: any = a[sortConfig.key];
+        let bVal: any = b[sortConfig.key];
+
+        if (['current_stock', 'stock_value'].includes(sortConfig.key)) {
+          aVal = parseFloat(aVal) || 0;
+          bVal = parseFloat(bVal) || 0;
+        }
+
+        if (typeof aVal === 'string') {
+          aVal = aVal.toLowerCase();
+          bVal = bVal.toLowerCase();
+        }
+
+        if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
     return filtered;
-  }, [inventory, searchTerm, selectedCategory]);
+  }, [inventory, searchTerm, selectedCategory, filters, sortConfig]);
 
   // Memoized callbacks
   const handleAdjustmentSuccess = useCallback(() => {
@@ -219,7 +261,7 @@ export default function InventoryPage() {
           <StatsSkeleton />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="p-6 rounded-xl bg-slate-900/40 backdrop-blur-md border border-slate-800/50">
+            <div className="p-6 rounded-xl bg-slate-900/40 backdrop-blur-md border border-slate-800/50 transition-standard hover-lift animate-entrance">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-slate-400">Total Items</p>
@@ -230,7 +272,7 @@ export default function InventoryPage() {
                 </div>
               </div>
             </div>
-            <div className="p-6 rounded-xl bg-slate-900/40 backdrop-blur-md border border-slate-800/50">
+            <div className="p-6 rounded-xl bg-slate-900/40 backdrop-blur-md border border-slate-800/50 transition-standard hover-lift animate-entrance-delay-1">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-slate-400">Low Stock</p>
@@ -241,7 +283,7 @@ export default function InventoryPage() {
                 </div>
               </div>
             </div>
-            <div className="p-6 rounded-xl bg-slate-900/40 backdrop-blur-md border border-slate-800/50">
+            <div className="p-6 rounded-xl bg-slate-900/40 backdrop-blur-md border border-slate-800/50 transition-standard hover-lift animate-entrance-delay-2">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-slate-400">Out of Stock</p>
@@ -252,7 +294,7 @@ export default function InventoryPage() {
                 </div>
               </div>
             </div>
-            <div className="p-6 rounded-xl bg-slate-900/40 backdrop-blur-md border border-slate-800/50">
+            <div className="p-6 rounded-xl bg-slate-900/40 backdrop-blur-md border border-slate-800/50 transition-standard hover-lift animate-entrance-delay-3">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-slate-400">Stock Value</p>
@@ -266,31 +308,32 @@ export default function InventoryPage() {
           </div>
         )}
 
-        {/* Filters - Fixed height */}
-        <div className="h-14 flex items-center gap-4 p-6 rounded-xl bg-slate-900/40 backdrop-blur-md border border-slate-800/50">
+        {/* Search & Filter Bar */}
+        <div className="h-14 flex items-center gap-3">
           <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none z-10" />
             <Input
               type="text"
               placeholder="Search products, SKU..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10 bg-[#111827] border-slate-800 text-slate-200 placeholder:text-slate-500"
+              className="pl-10 pr-4 bg-[#111827] border-slate-800 text-slate-200 placeholder:text-slate-500 focus:ring-2 focus:ring-indigo-500/50 transition-standard"
             />
           </div>
-          <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4 text-slate-400" />
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="px-4 py-2 rounded-lg bg-[#111827] border border-slate-800 text-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[180px]"
-            >
-              <option value="all">All Categories</option>
-              {categories.map(cat => (
-                <option key={cat.id} value={cat.name}>{cat.name}</option>
-              ))}
-            </select>
-          </div>
+          <FilterDropdown
+            onFilterChange={(f) => {
+              setFilters(f);
+              if (f.category) setSelectedCategory(f.category);
+            }}
+            activeFilters={filters}
+            showDateRange={false}
+            showStatus={false}
+            showCategory={true}
+            categoryOptions={[
+              { value: 'all', label: 'All Categories' },
+              ...categories.map(cat => ({ value: cat.name, label: cat.name })),
+            ]}
+          />
         </div>
 
         {/* Table - Skeleton matches exact layout */}

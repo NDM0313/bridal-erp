@@ -251,8 +251,8 @@ export async function generateInvoice(transactionId: number): Promise<InvoiceDat
     // Debug logging
     if (!finalSku) {
       console.warn(`No SKU found for line ${line.id}:`, {
-        product_id: line.product_id,
-        variation_id: line.variation_id,
+        product_id: line.product?.id,
+        variation_id: line.variation?.id,
         product_sku: productSku,
         variation_sku: variationSku,
       });

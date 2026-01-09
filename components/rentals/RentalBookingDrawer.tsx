@@ -22,23 +22,64 @@ import { RentalProductSearch, SearchProduct } from './RentalProductSearch';
 import { CustomerSearch, Contact } from './CustomerSearch';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/utils/supabase/client';
+import { useSettings } from '@/hooks/useSettings';
+import { useGlobalRefresh } from '@/lib/hooks/useGlobalRefresh';
 
-// Generate rental invoice number
+// Generate rental invoice number using settings
 async function generateRentalInvoiceNumber(businessId: number): Promise<string> {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
+  try {
+    // Load rental settings from localStorage
+    const storedSettings = localStorage.getItem('studio_rently_settings');
+    const settings = storedSettings ? JSON.parse(storedSettings) : null;
+    
+    const rentalSettings = {
+      rental_prefix: settings?.rental_prefix || 'REN',
+      rental_format: settings?.rental_format || 'long',
+      rental_custom_format: settings?.rental_custom_format || '',
+    };
 
-  // Get count of rental bookings this month
-  const { count } = await supabase
-    .from('rental_bookings')
-    .select('*', { count: 'exact', head: true })
-    .eq('business_id', businessId)
-    .gte('created_at', `${year}-${month}-01`)
-    .lt('created_at', `${year}-${String(parseInt(month) + 1).padStart(2, '0')}-01`);
+    const date = new Date();
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
 
-  const sequence = String((count || 0) + 1).padStart(4, '0');
-  return `RENT-${year}${month}-${sequence}`;
+    // Find the last rental booking to get the next sequence number
+    const prefix = rentalSettings.rental_prefix || 'REN';
+    let searchPattern = `${prefix}-%`;
+    
+    if (rentalSettings.rental_format === 'long') {
+      searchPattern = `${prefix}-${year}-%`;
+    } else if (rentalSettings.rental_format === 'short') {
+      searchPattern = `${prefix}-%`;
+    }
+
+    const { data: lastBooking } = await supabase
+      .from('rental_bookings')
+      .select('booking_no')
+      .eq('business_id', businessId)
+      .like('booking_no', searchPattern)
+      .order('booking_no', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    // Extract sequence number from last booking
+    let sequence = 1;
+    if (lastBooking?.booking_no) {
+      const parts = lastBooking.booking_no.split('-');
+      const lastSeq = parts[parts.length - 1];
+      sequence = parseInt(lastSeq) + 1;
+    }
+
+    // Generate rental number using utility
+    const { generateRentalNumber } = await import('@/lib/utils/invoiceGenerator');
+    return generateRentalNumber(rentalSettings, sequence, date);
+  } catch (err) {
+    // Fallback to default format
+    const date = new Date();
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    return `REN-${year}${month}-0001`;
+  }
 }
 
 // Types
@@ -63,6 +104,7 @@ interface PaymentDetails {
 
 export const RentalBookingDrawer = ({ isOpen, onClose, booking: editBooking }: RentalBookingDrawerProps) => {
   const router = useRouter();
+  const { handleSuccess } = useGlobalRefresh();
   const isEditMode = !!editBooking;
   
   // Date State
@@ -74,9 +116,21 @@ export const RentalBookingDrawer = ({ isOpen, onClose, booking: editBooking }: R
   const [pickupDate, setPickupDate] = useState<Date | undefined>(
     editBooking?.pickup_date ? new Date(editBooking.pickup_date) : new Date()
   );
+  // Load default rental duration from settings (reactive)
+  const { settings } = useSettings();
+  const defaultRentalDuration = settings?.default_rental_duration || 3;
+  
   const [returnDate, setReturnDate] = useState<Date | undefined>(
-    editBooking?.return_date ? new Date(editBooking.return_date) : addDays(new Date(), 3)
+    editBooking?.return_date ? new Date(editBooking.return_date) : addDays(new Date(), defaultRentalDuration)
   );
+
+  // Update return date when default rental duration changes from settings
+  useEffect(() => {
+    if (!editBooking && pickupDate && settings) {
+      const duration = settings.default_rental_duration || 3;
+      setReturnDate(addDays(pickupDate, duration));
+    }
+  }, [settings?.default_rental_duration, pickupDate, editBooking]);
 
   // Customer State
   const [selectedCustomer, setSelectedCustomer] = useState<Contact | null>(
@@ -96,6 +150,8 @@ export const RentalBookingDrawer = ({ isOpen, onClose, booking: editBooking }: R
       sku: editBooking.product.sku || '',
       image: editBooking.product.image || '',
       rentPrice: editBooking.rental_amount,
+      status: 'available' as const,
+      retailPrice: 0,
     } : null
   );
   const [rentalAmount, setRentalAmount] = useState<string>(
@@ -156,6 +212,8 @@ export const RentalBookingDrawer = ({ isOpen, onClose, booking: editBooking }: R
           sku: editBooking.product.sku || '',
           image: editBooking.product.image || '',
           rentPrice: editBooking.rental_amount,
+          status: 'available' as const,
+          retailPrice: 0,
         });
       }
 
@@ -369,7 +427,8 @@ export const RentalBookingDrawer = ({ isOpen, onClose, booking: editBooking }: R
           throw new Error(updateError.message || 'Failed to update booking');
         }
 
-        toast.success('Booking updated successfully!');
+        // Refresh rentals list immediately
+        await handleSuccess('rentals', 'Booking updated successfully!');
       } else {
         // Generate invoice number for new booking
         const invoiceNumber = await generateRentalInvoiceNumber(profile.business_id);
@@ -399,7 +458,8 @@ export const RentalBookingDrawer = ({ isOpen, onClose, booking: editBooking }: R
           throw new Error(bookingError.message || 'Failed to create booking');
         }
 
-        toast.success('Booking created successfully!');
+        // Refresh rentals list immediately
+        await handleSuccess('rentals', 'Booking created successfully!');
         // Reset form only if not in edit mode
         setSelectedProduct(null);
         setSelectedCustomer(null);

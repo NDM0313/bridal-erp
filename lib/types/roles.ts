@@ -3,7 +3,7 @@
  * Defines system roles and their permissions
  */
 
-export type UserRole = 'admin' | 'manager' | 'cashier' | 'auditor';
+export type UserRole = 'admin' | 'manager' | 'cashier' | 'auditor' | 'production_worker' | 'salesman';
 
 export interface RolePermissions {
   // Products
@@ -207,6 +207,46 @@ export const ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
     // Invoices & Receipts - View only
     canViewInvoices: true,
     canPrintReceipts: true,
+  },
+
+  production_worker: {
+    // Products - No access
+    canViewProducts: false,
+    canCreateProducts: false,
+    canEditProducts: false,
+    canDeleteProducts: false,
+
+    // Sales - No access
+    canViewSales: false,
+    canCreateSales: false,
+    canEditSales: false,
+    canDeleteSales: false,
+    canFinalizeSales: false,
+
+    // Purchases - No access
+    canViewPurchases: false,
+    canCreatePurchases: false,
+    canEditPurchases: false,
+    canDeletePurchases: false,
+
+    // Stock - No access
+    canViewStock: false,
+    canAdjustStock: false,
+    canTransferStock: false,
+
+    // Reports - No access
+    canViewBasicReports: false,
+    canViewAdvancedReports: false,
+    canViewAuditLogs: false,
+
+    // Business Settings - No access
+    canManageBusiness: false,
+    canManageUsers: false,
+    canManageLocations: false,
+
+    // Invoices & Receipts - No access
+    canViewInvoices: false,
+    canPrintReceipts: false,
   },
 };
 

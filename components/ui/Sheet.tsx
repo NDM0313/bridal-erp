@@ -1,9 +1,9 @@
-'use client';
+"use client";
 
-import * as React from 'react';
-import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { X } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import * as React from "react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { X } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const Sheet = DialogPrimitive.Root;
 
@@ -19,13 +19,22 @@ const SheetOverlay = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Overlay
     className={cn(
-      'fixed inset-0 z-[49] bg-black/50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
+      "fixed inset-0 bg-black/50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      "isolate", // Prevent blur from affecting children
       className
     )}
-    style={{ 
-      pointerEvents: 'auto',
-      backdropFilter: 'none',
-      WebkitBackdropFilter: 'none'
+    style={{
+      zIndex: 50, // Main modal level
+      backdropFilter: 'none', // No blur on Sheet overlay to match AddProduct sharpness
+      WebkitBackdropFilter: 'none',
+    }}
+    onClick={(e) => {
+      // Prevent overlay clicks from bubbling to dropdown backdrop
+      e.stopPropagation();
+    }}
+    onMouseDown={(e) => {
+      // Prevent mousedown from bubbling
+      e.stopPropagation();
     }}
     {...props}
     ref={ref}
@@ -35,65 +44,60 @@ SheetOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
 interface SheetContentProps
   extends React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> {
-  side?: 'top' | 'right' | 'bottom' | 'left';
+  side?: "top" | "right" | "bottom" | "left";
 }
 
 const SheetContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   SheetContentProps
->(({ side = 'left', className, children, ...props }, ref) => (
-  <SheetPortal>
-    {/* Always show overlay for backdrop, but with different z-index for right-side */}
-    {side === 'right' ? (
-      <div 
-        className="fixed inset-0 z-[49] bg-black/60" 
-        style={{ 
-          backdropFilter: 'none',
-          animation: 'fadeIn 0.15s ease-out',
-        }} 
-      />
-    ) : (
+>(({ side = "right", className, children, ...props }, ref) => {
+  const isNested = props['data-nested-modal'] === 'true';
+  
+  return (
+    <SheetPortal>
       <SheetOverlay />
-    )}
-    <DialogPrimitive.Content
-      ref={ref}
-      aria-describedby={undefined}
-      className={cn(
-        'fixed z-[50] gap-4 bg-[#0B0F1A] border-gray-800 p-0 shadow-2xl transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-150 data-[state=open]:duration-200',
-        side === 'left' &&
-          'inset-y-0 left-0 h-full w-full sm:max-w-lg border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left',
-        side === 'right' &&
-          'inset-y-0 right-0 h-screen w-[calc(100vw-280px)] lg:w-[calc(100vw-280px)] max-w-6xl border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right',
-        side === 'top' &&
-          'inset-x-0 top-0 border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top',
-        side === 'bottom' &&
-          'inset-x-0 bottom-0 border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
-        className
-      )}
-      style={{
-        // Ensure drawer is always on top and full height
-        position: 'fixed',
-        top: 0,
-        bottom: 0,
-        height: '100vh',
-        maxHeight: '100vh',
-        overflow: 'hidden',
-      }}
-      onInteractOutside={(e) => {
-        // Prevent Sheet from closing when clicking outside if a nested dialog is open
-        // This will be handled by the parent component
-        e.preventDefault();
-      }}
-      {...props}
-    >
-      {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-secondary">
-        <X className="h-4 w-4" />
-        <span className="sr-only">Close</span>
-      </DialogPrimitive.Close>
-    </DialogPrimitive.Content>
-  </SheetPortal>
-));
+      <DialogPrimitive.Content
+        ref={ref}
+        className={cn(
+          "fixed gap-4 bg-[#0B0F1A] p-6 shadow-lg transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:duration-500",
+          "isolate", // Prevent blur from affecting content
+          side === "top" &&
+            "inset-x-0 top-0 border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top",
+          side === "right" &&
+            "inset-y-0 right-0 h-full w-3/4 border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-sm",
+          side === "bottom" &&
+            "inset-x-0 bottom-0 border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
+          side === "left" &&
+            "inset-y-0 left-0 h-full w-3/4 border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left sm:max-w-sm",
+          className
+        )}
+        style={{
+          zIndex: isNested ? 70 : 50, // Sub-modal or main modal
+          backgroundColor: '#0B0F1A', // Solid background - ensure no transparency
+          backdropFilter: 'none', // Explicitly disable blur on content
+          WebkitBackdropFilter: 'none',
+        }}
+        onClick={(e) => {
+          // Prevent clicks inside modal from closing parent modals
+          e.stopPropagation();
+          props.onClick?.(e);
+        }}
+        onMouseDown={(e) => {
+          // Prevent mousedown from bubbling
+          e.stopPropagation();
+          props.onMouseDown?.(e);
+        }}
+        {...props}
+      >
+        {children}
+        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-secondary">
+          <X className="h-4 w-4" />
+          <span className="sr-only">Close</span>
+        </DialogPrimitive.Close>
+      </DialogPrimitive.Content>
+    </SheetPortal>
+  );
+});
 SheetContent.displayName = DialogPrimitive.Content.displayName;
 
 const SheetHeader = ({
@@ -102,13 +106,13 @@ const SheetHeader = ({
 }: React.HTMLAttributes<HTMLDivElement>) => (
   <div
     className={cn(
-      'flex flex-col space-y-2 text-center sm:text-left p-6 border-b border-gray-800',
+      "flex flex-col space-y-2 text-center sm:text-left",
       className
     )}
     {...props}
   />
 );
-SheetHeader.displayName = 'SheetHeader';
+SheetHeader.displayName = "SheetHeader";
 
 const SheetFooter = ({
   className,
@@ -116,13 +120,13 @@ const SheetFooter = ({
 }: React.HTMLAttributes<HTMLDivElement>) => (
   <div
     className={cn(
-      'flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2 p-6 border-t border-gray-800',
+      "flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2",
       className
     )}
     {...props}
   />
 );
-SheetFooter.displayName = 'SheetFooter';
+SheetFooter.displayName = "SheetFooter";
 
 const SheetTitle = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Title>,
@@ -130,7 +134,7 @@ const SheetTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Title
     ref={ref}
-    className={cn('text-lg font-semibold text-white', className)}
+    className={cn("text-lg font-semibold text-foreground", className)}
     {...props}
   />
 ));
@@ -142,7 +146,7 @@ const SheetDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Description
     ref={ref}
-    className={cn('text-sm text-gray-400', className)}
+    className={cn("text-sm text-muted-foreground", className)}
     {...props}
   />
 ));
@@ -160,4 +164,3 @@ export {
   SheetTitle,
   SheetDescription,
 };
-

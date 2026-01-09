@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 export interface SwitchProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange'> {
   label?: string;
   onCheckedChange?: (checked: boolean) => void;
+  onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
 export const Switch = forwardRef<HTMLInputElement, SwitchProps>(
@@ -33,7 +34,7 @@ export const Switch = forwardRef<HTMLInputElement, SwitchProps>(
             type="checkbox"
             className="sr-only"
             ref={ref}
-            checked={checked}
+            checked={checked ?? false}
             onChange={handleChange}
             {...props}
           />

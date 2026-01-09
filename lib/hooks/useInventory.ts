@@ -3,6 +3,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/utils/supabase/client';
 import { toast } from 'sonner';
+import { useBranchV2 } from '@/lib/context/BranchContextV2';
 
 interface InventoryItem {
   id: number;
@@ -39,9 +40,15 @@ interface InventoryQueryResult {
  * Implements stale-while-revalidate pattern
  */
 export function useInventory() {
+  const { activeBranch } = useBranchV2();
+  const activeBranchId = activeBranch?.id ? Number(activeBranch.id) : null;
+
   return useQuery<InventoryQueryResult>({
-    queryKey: ['inventory'],
-    queryFn: async () => {
+    queryKey: ['inventory', activeBranchId],
+    enabled: !!activeBranchId,
+    queryFn: async (): Promise<InventoryQueryResult> => {
+      console.log('🔍 BRANCH FILTER [useInventory]', { activeBranchId, type: typeof activeBranchId });
+      
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Authentication required');
 
@@ -52,6 +59,19 @@ export function useInventory() {
         .single();
 
       if (!profile) throw new Error('Business profile not found');
+
+      if (!activeBranchId) {
+        // Return empty data if no branch selected
+        return {
+          inventory: [],
+          stats: {
+            totalItems: 0,
+            lowStockItems: 0,
+            outOfStockItems: 0,
+            totalStockValue: 0,
+          },
+        };
+      }
 
       // Fetch products
       const { data: productsData, error: productsError } = await supabase
@@ -79,10 +99,33 @@ export function useInventory() {
       // Fetch variations
       const { data: variations, error: variationsError } = await supabase
         .from('variations')
-        .select('id, name, sub_sku, product_id, qty_available, alert_quantity, unit_id')
+        .select('id, name, sub_sku, product_id, alert_quantity, unit_id')
         .in('product_id', productIds);
 
       if (variationsError) throw variationsError;
+
+      // CRITICAL: Fetch stock from variation_location_details for the active branch
+      const variationIds = (variations || []).map((v: any) => v.id);
+      const branchIdNum = Number(activeBranchId);
+      console.log('🔍 BRANCH FILTER [useInventory] Applying stock filter', { branchIdNum, type: typeof branchIdNum });
+      
+      let stockQuery = supabase
+        .from('variation_location_details')
+        .select('variation_id, qty_available')
+        .in('variation_id', variationIds.length > 0 ? variationIds : [0]);
+
+      // CRITICAL: Filter by active branch (ensure it's a number)
+      stockQuery = stockQuery.eq('location_id', branchIdNum);
+
+      const { data: stockData, error: stockError } = await stockQuery;
+
+      if (stockError) throw stockError;
+
+      // Create stock map: variation_id -> qty_available
+      const stockMap = new Map<number, number>();
+      (stockData || []).forEach((s: any) => {
+        stockMap.set(s.variation_id, parseFloat(s.qty_available?.toString() || '0'));
+      });
 
       // Fetch units
       const unitIds = [...new Set((variations || []).map((v: any) => v.unit_id).filter(Boolean))];
@@ -103,12 +146,13 @@ export function useInventory() {
       const categoriesMap = new Map((categoriesData || []).map((c: any) => [c.id, c.name]));
 
       // Combine data
-      const inventory: InventoryItem[] = (variations || [])
+      const inventory = (variations || [])
         .map((variation: any) => {
           const product = productsData.find((p: any) => p.id === variation.product_id);
           if (!product) return null;
 
-          const qtyAvailable = variation.qty_available || 0;
+          // CRITICAL: Get stock from branch-specific stock map
+          const qtyAvailable = stockMap.get(variation.id) || 0;
           const alertQty = variation.alert_quantity || 0;
           const purchasePrice = product.purchase_price || 0;
           const stockValue = qtyAvailable * purchasePrice;
@@ -140,7 +184,7 @@ export function useInventory() {
             stock_status: stockStatus,
           };
         })
-        .filter((item): item is InventoryItem => item !== null);
+        .filter((item) => item !== null) as InventoryItem[];
 
       // Calculate stats
       const totalItems = inventory.length;

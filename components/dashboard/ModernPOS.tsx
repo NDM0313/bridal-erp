@@ -31,6 +31,7 @@ import { salesApi, type CreateSaleDto } from '@/lib/api/sales';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/utils/supabase/client';
 import { toast } from 'sonner';
+import { useBranchV2 } from '@/lib/context/BranchContextV2';
 
 // Format currency helper
 const formatCurrency = (amount: number): string => {
@@ -76,6 +77,8 @@ interface Variation {
 
 export function ModernPOS() {
   const router = useRouter();
+  const { activeBranch } = useBranchV2();
+  const activeBranchId = activeBranch?.id ? Number(activeBranch.id) : null;
   const [cart, setCart] = useState<CartItem[]>([]);
   const [products, setProducts] = useState<Variation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -94,11 +97,13 @@ export function ModernPOS() {
   const [editingDiscount, setEditingDiscount] = useState<number | null>(null); // variationId being edited
 
   useEffect(() => {
-    loadProducts();
-    loadCategories();
-    loadBrands();
-    loadTodaysSales();
-  }, []);
+    if (activeBranchId) {
+      loadProducts();
+      loadCategories();
+      loadBrands();
+      loadTodaysSales();
+    }
+  }, [activeBranchId]);
 
   const loadProducts = async () => {
     try {
@@ -274,22 +279,19 @@ export function ModernPOS() {
 
   const loadStock = async (variationIds: number[]) => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      if (!activeBranchId) {
+        setStockMap(new Map());
+        return;
+      }
 
-      const { data: locations } = await supabase
-        .from('business_locations')
-        .select('id')
-        .limit(1)
-        .maybeSingle();
-
-      if (!locations?.id) return;
-
+      const branchIdNum = Number(activeBranchId);
+      console.log('🔍 BRANCH FILTER [ModernPOS.loadStock]', { branchIdNum, type: typeof branchIdNum });
+      
       const { data: stockData, error } = await supabase
         .from('variation_location_details')
         .select('variation_id, qty_available')
         .in('variation_id', variationIds)
-        .eq('location_id', locations.id);
+        .eq('location_id', branchIdNum); // CRITICAL: Filter by active branch (ensure number)
 
       if (error) throw error;
 
@@ -305,6 +307,11 @@ export function ModernPOS() {
 
   const loadTodaysSales = async () => {
     try {
+      if (!activeBranchId) {
+        setTodaysSales(0);
+        return;
+      }
+
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
@@ -319,12 +326,17 @@ export function ModernPOS() {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
+      // CRITICAL: Filter by active branch
+      const branchIdNum = Number(activeBranchId);
+      console.log('🔍 BRANCH FILTER [ModernPOS.loadTodaysSales]', { branchIdNum, type: typeof branchIdNum });
+      
       const { data: sales, error } = await supabase
         .from('transactions')
         .select('final_total')
         .eq('business_id', profile.business_id)
         .eq('type', 'sell')
         .eq('status', 'final')
+        .eq('location_id', branchIdNum) // CRITICAL: Filter by branch (ensure number)
         .gte('transaction_date', today.toISOString());
 
       if (error) throw error;
@@ -450,6 +462,23 @@ export function ModernPOS() {
       return;
     }
 
+    // CRITICAL: Validate branch selection - cannot create sale for "All Locations"
+    if (activeBranch?.id === 'ALL') {
+      toast.error('Cannot create sale for "All Locations"', {
+        description: 'Please select a specific branch to create a sale.',
+        duration: 5000,
+      });
+      return;
+    }
+
+    if (!activeBranchId) {
+      toast.error('No branch selected', {
+        description: 'Please select a branch first to create a sale.',
+        duration: 5000,
+      });
+      return;
+    }
+
     try {
       setProcessing(true);
 
@@ -458,20 +487,8 @@ export function ModernPOS() {
         throw new Error('Authentication required');
       }
 
-      const { data: locationsData, error: locationsError } = await supabase
-        .from('business_locations')
-        .select('id')
-        .limit(1);
-
-      if (locationsError) {
-        throw new Error(`Failed to fetch location: ${locationsError.message}`);
-      }
-
-      if (!locationsData || locationsData.length === 0) {
-        throw new Error('No location found. Please set up a location first.');
-      }
-
-      const locations = locationsData[0];
+      // Use active branch ID directly (already validated above)
+      const locationId = Number(activeBranchId);
 
       // Get business_id from profile
       const { data: profile } = await supabase
@@ -518,7 +535,7 @@ export function ModernPOS() {
         .from('transactions')
         .insert({
           business_id: profile.business_id,
-          location_id: locations.id,
+          location_id: locationId,
           type: 'sell',
           status: 'final',
           payment_status: 'paid',

@@ -61,12 +61,120 @@ if (supabaseAnonKey.length < 20) {
  * ✅ NEVER uses service_role key in frontend
  * ✅ All operations respect RLS policies
  */
+// Create AbortController for timeout (browser-compatible)
+const createTimeoutSignal = (timeoutMs: number = 60000) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  return { signal: controller.signal, cleanup: () => clearTimeout(timeoutId) };
+};
+
+// Enhanced fetch with retry logic and better error handling
+const enhancedFetch = async (url: string, options: RequestInit = {}, retries = 3): Promise<Response> => {
+  let lastError: any = null;
+  
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    // Create a NEW timeout signal for each attempt
+    const { signal, cleanup } = createTimeoutSignal(60000); // 60 seconds per attempt
+    
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal,
+      });
+      
+      cleanup();
+      
+      // Check if response is OK
+      if (!response.ok && response.status >= 500) {
+        // Server error - retry
+        cleanup();
+        lastError = new Error(`Server error: ${response.status}`);
+        if (attempt < retries) {
+          console.warn(`⚠️ Server error ${response.status}, retrying... (${attempt + 1}/${retries + 1})`);
+          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
+          continue;
+        }
+      }
+      
+      return response;
+    } catch (error: any) {
+      cleanup();
+      lastError = error;
+      
+      // Don't retry on last attempt
+      if (attempt === retries) {
+        // Provide user-friendly error messages
+        if (error.name === 'AbortError') {
+          console.error('⏱️ Request timeout after 60s');
+          console.error('💡 This might indicate:');
+          console.error('   1. Slow internet connection');
+          console.error('   2. Supabase service is slow or overloaded');
+          console.error('   3. Network connectivity issues');
+          // Return a graceful error response instead of throwing
+          return new Response(JSON.stringify({ 
+            error: 'timeout',
+            message: 'Connection timed out. Please check your internet connection and try again.' 
+          }), { 
+            status: 504,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        
+        if (error.message === 'Failed to fetch' || error.message?.includes('fetch') || error.message?.includes('network')) {
+          console.error('🌐 Network error:', error.message);
+          console.error('💡 Possible causes:');
+          console.error('   1. No internet connection');
+          console.error('   2. Supabase project paused/not accessible');
+          console.error('   3. Incorrect SUPABASE_URL in .env.local');
+          console.error('   4. Firewall blocking connection');
+          // Return graceful error response for offline mode
+          return new Response(JSON.stringify({ 
+            error: 'offline',
+            message: 'Unable to connect to server. Please check your internet connection.' 
+          }), { 
+            status: 503,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        
+        // For other errors, return a generic error response
+        console.error('❌ Request failed:', error.message);
+        return new Response(JSON.stringify({ 
+          error: 'request_failed',
+          message: error.message || 'Request failed. Please try again.' 
+        }), { 
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      
+      // Wait before retry (exponential backoff: 1s, 2s, 4s)
+      const delay = 1000 * Math.pow(2, attempt);
+      console.warn(`⚠️ Request failed (attempt ${attempt + 1}/${retries + 1}), retrying in ${delay/1000}s...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  // Fallback (should never reach here)
+  return new Response(JSON.stringify({ 
+    error: 'max_retries',
+    message: 'Request failed after multiple attempts. Please try again later.' 
+  }), { 
+    status: 500,
+    headers: { 'Content-Type': 'application/json' }
+  });
+};
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
     storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+    flowType: 'pkce',
+  },
+  global: {
+    fetch: enhancedFetch,
   },
 })
 

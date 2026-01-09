@@ -25,6 +25,52 @@ body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
 }
 
+/* ============================================
+   GLOBAL SCROLLBAR STANDARDIZATION (Indigo Theme)
+   ============================================ */
+/* Standardized thin scrollbar for all browsers - Indigo Theme */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(79, 70, 229, 0.5) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 3px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: rgba(79, 70, 229, 0.5);
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 0.3s ease-in-out;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(79, 70, 229, 1);
+}
+
+/* Dark mode scrollbar - Indigo Theme */
+@media (prefers-color-scheme: dark) {
+  * {
+    scrollbar-color: rgba(79, 70, 229, 0.5) transparent;
+  }
+  
+  *::-webkit-scrollbar-thumb {
+    background-color: rgba(79, 70, 229, 0.5);
+  }
+  
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(79, 70, 229, 1);
+  }
+}
+
 /* Scrollbar utilities */
 .scrollbar-hide {
   -ms-overflow-style: none;
@@ -35,7 +81,37 @@ body {
   display: none;
 }
 
-/* Performance optimizations - Smooth animations */
+/* ============================================
+   GLOBAL THEME STANDARDIZATION
+   ============================================ */
+/* Standardized Section Headers */
+.section-header {
+  @apply text-sm font-semibold text-gray-400 uppercase mb-4;
+}
+
+/* Standardized Input Fields */
+input[type="text"],
+input[type="number"],
+input[type="email"],
+input[type="password"],
+input[type="date"],
+input[type="time"],
+textarea,
+select {
+  @apply bg-[#111827] border border-gray-800 rounded-lg px-4 py-2.5 text-white;
+  @apply focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500;
+  @apply transition-all duration-300 ease-in-out;
+}
+
+/* Standardized Focus Rings */
+*:focus-visible {
+  @apply outline-none ring-2 ring-indigo-500/50 ring-offset-2 ring-offset-[#0B0F1A];
+}
+
+/* ============================================
+   PERFORMANCE OPTIMIZATIONS & ANIMATIONS
+   ============================================ */
+/* Smooth animations */
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -48,7 +124,7 @@ body {
 @keyframes slideInUp {
   from {
     opacity: 0;
-    transform: translateY(20px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
@@ -67,6 +143,42 @@ body {
   }
 }
 
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Entrance animation classes - Hardware accelerated for performance */
+.animate-entrance {
+  animation: fadeIn 0.3s ease-in-out, slideInUp 0.3s ease-in-out;
+  will-change: transform, opacity;
+  transform: translateZ(0); /* Force GPU acceleration */
+}
+
+.animate-entrance-delay-1 {
+  animation: fadeIn 0.3s ease-in-out 0.1s both, slideInUp 0.3s ease-in-out 0.1s both;
+  will-change: transform, opacity;
+  transform: translateZ(0);
+}
+
+.animate-entrance-delay-2 {
+  animation: fadeIn 0.3s ease-in-out 0.2s both, slideInUp 0.3s ease-in-out 0.2s both;
+  will-change: transform, opacity;
+  transform: translateZ(0);
+}
+
+.animate-entrance-delay-3 {
+  animation: fadeIn 0.3s ease-in-out 0.3s both, slideInUp 0.3s ease-in-out 0.3s both;
+  will-change: transform, opacity;
+  transform: translateZ(0);
+}
+
 /* Optimize rendering performance */
 * {
   -webkit-font-smoothing: antialiased;
@@ -79,26 +191,558 @@ img, video {
   height: auto;
 }
 
-/* Optimize scroll performance */
-.scrollbar-thin {
-  scrollbar-width: thin;
-  scrollbar-color: rgb(31 41 55) transparent;
+/* ============================================
+   GLOBAL TRANSITION ENFORCEMENT
+   ============================================ */
+/* Global transition standardization - Applied to ALL interactive elements */
+button,
+a,
+input,
+select,
+textarea,
+[role="button"],
+[role="tab"],
+[role="menuitem"],
+.card,
+[class*="card"],
+[class*="Card"] {
+  @apply transition-all duration-300 ease-in-out;
 }
 
-.scrollbar-thin::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* Standardized transition class - Hardware accelerated */
+.transition-standard {
+  @apply transition-all duration-300 ease-in-out;
+  will-change: transform, opacity;
+  transform: translateZ(0); /* Force GPU acceleration */
 }
 
-.scrollbar-thin::-webkit-scrollbar-track {
-  background: transparent;
+/* Hover effects for interactive elements - Hardware accelerated */
+.hover-lift {
+  @apply transition-all duration-300 ease-in-out;
+  will-change: transform;
+  transform: translateZ(0); /* Force GPU acceleration */
 }
 
-.scrollbar-thin::-webkit-scrollbar-thumb {
-  background-color: rgb(31 41 55);
-  border-radius: 3px;
+.hover-lift:hover {
+  @apply scale-[1.02] shadow-lg;
+  transform: translateZ(0) scale(1.02); /* Maintain GPU acceleration on hover */
 }
 
-.scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background-color: rgb(55 65 81);
+/* Apply entrance animations to all dashboard-style components - Hardware accelerated */
+[class*="dashboard"],
+[class*="Dashboard"],
+[class*="card"],
+[class*="Card"],
+[class*="chart"],
+[class*="Chart"],
+[class*="widget"],
+[class*="Widget"],
+[class*="stat"],
+[class*="Stat"],
+[class*="metric"],
+[class*="Metric"] {
+  @apply transition-all duration-300 ease-in-out;
+  will-change: transform, opacity;
+  transform: translateZ(0); /* Force GPU acceleration */
 }
+
+/* ============================================
+   STANDARDIZED PAGE HEADERS
+   ============================================ */
+/* Global header standardization - Applied to all pages */
+.page-header-standard h1,
+h1.page-header-standard {
+  @apply text-2xl font-semibold text-indigo-400 mb-1;
+}
+
+.page-header-standard p,
+p.page-header-standard {
+  @apply text-sm text-slate-400;
+}
+
+/* Ensure consistent spacing after headers */
+.page-header-standard {
+  @apply mb-8;
+}
+
+/* ============================================
+   STANDARD PAGE CONTAINER UTILITY
+   ============================================ */
+.standard-page-container {
+  @apply transition-all duration-300 ease-in-out;
+}
+
+.standard-page-container > * {
+  @apply transition-all duration-300 ease-in-out;
+}
+
+/* Staggered entrance for children */
+.standard-page-container > *:nth-child(1) {
+  animation: fadeIn 0.3s ease-in-out, slideInUp 0.3s ease-in-out;
+}
+
+.standard-page-container > *:nth-child(2) {
+  animation: fadeIn 0.3s ease-in-out 0.1s both, slideInUp 0.3s ease-in-out 0.1s both;
+}
+
+.standard-page-container > *:nth-child(3) {
+  animation: fadeIn 0.3s ease-in-out 0.2s both, slideInUp 0.3s ease-in-out 0.2s both;
+}
+
+.standard-page-container > *:nth-child(4) {
+  animation: fadeIn 0.3s ease-in-out 0.3s both, slideInUp 0.3s ease-in-out 0.3s both;
+}
+
+.standard-page-container > *:nth-child(n+5) {
+  animation: fadeIn 0.3s ease-in-out 0.4s both, slideInUp 0.3s ease-in-out 0.4s both;
+}
+
+/* ============================================
+   GLOBAL SEARCH BAR STANDARDIZATION
+   ============================================ */
+/* Standardized search bar container - Fixes icon/placeholder overlap */
+.search-bar-container {
+  @apply relative flex-1;
+}
+
+.search-bar-container .search-icon {
+  @apply absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none z-10;
+}
+
+.search-bar-container input[type="text"],
+.search-bar-container input[type="search"] {
+  @apply pl-10 pr-4;
+}
+
+/* Global search input styling */
+input[type="text"].search-input,
+input[type="search"].search-input {
+  @apply pl-10 pr-4 bg-[#111827] border-slate-800 text-slate-200 placeholder:text-slate-500;
+  @apply focus:ring-2 focus:ring-indigo-500/50 transition-all duration-300 ease-in-out rounded-xl;
+}
+
+/* ============================================
+   SEARCH INPUT CENTER-TO-LEFT ALIGNMENT
+   Figma-like Professional Search Experience
+   ============================================ */
+/* Primary: Target .search-bar class (recommended for all search inputs) */
+input.search-bar {
+  text-align: left !important;
+  padding-left: 2.5rem !important; /* 40px - ensures space for search icon on the left */
+  transition: text-align 0.2s ease-in-out;
+}
+
+input.search-bar::placeholder {
+  text-align: center !important;
+  opacity: 0.7;
+  transition: text-align 0.2s ease-in-out, opacity 0.2s ease-in-out;
+}
+
+/* Secondary: Target all search inputs in search-bar-container */
+.search-bar-container input[type="text"],
+.search-bar-container input[type="search"],
+.search-bar-container input {
+  text-align: left !important;
+  padding-left: 2.5rem !important; /* 40px - ensures space for search icon */
+  transition: text-align 0.2s ease-in-out;
+}
+
+.search-bar-container input[type="text"]::placeholder,
+.search-bar-container input[type="search"]::placeholder,
+.search-bar-container input::placeholder {
+  text-align: center !important;
+  opacity: 0.7;
+  transition: text-align 0.2s ease-in-out, opacity 0.2s ease-in-out;
+}
+
+/* Tertiary: Target .search-input class (for backward compatibility) */
+input[type="text"].search-input,
+input[type="search"].search-input,
+input.search-input {
+  text-align: left !important;
+  padding-left: 2.5rem !important; /* 40px - ensures space for search icon */
+  transition: text-align 0.2s ease-in-out;
+}
+
+input[type="text"].search-input::placeholder,
+input[type="search"].search-input::placeholder,
+input.search-input::placeholder {
+  text-align: center !important;
+  opacity: 0.7;
+  transition: text-align 0.2s ease-in-out, opacity 0.2s ease-in-out;
+}
+
+/* Ensure text stays left-aligned when user types */
+input.search-bar:not(:placeholder-shown),
+.search-bar-container input:not(:placeholder-shown),
+input.search-input:not(:placeholder-shown) {
+  text-align: left !important;
+}
+
+/* Ensure placeholder stays centered when focused but empty */
+input.search-bar:focus:placeholder-shown::placeholder,
+.search-bar-container input:focus:placeholder-shown::placeholder,
+input.search-input:focus:placeholder-shown::placeholder {
+  text-align: center !important;
+  opacity: 0.7;
+}
+
+/* Generic: Target inputs with left padding (indicating search icon) */
+/* This catches inputs that use pl-10, pl-12, etc. for icon spacing */
+input[class*="pl-10"],
+input[class*="pl-12"],
+input[class*="pl-11"] {
+  text-align: left !important;
+  transition: text-align 0.2s ease-in-out;
+}
+
+input[class*="pl-10"]::placeholder,
+input[class*="pl-12"]::placeholder,
+input[class*="pl-11"]::placeholder {
+  text-align: center !important;
+  opacity: 0.7;
+  transition: text-align 0.2s ease-in-out, opacity 0.2s ease-in-out;
+}
+
+input[class*="pl-10"]:not(:placeholder-shown),
+input[class*="pl-12"]:not(:placeholder-shown),
+input[class*="pl-11"]:not(:placeholder-shown) {
+  text-align: left !important;
+}
+
+input[class*="pl-10"]:focus:placeholder-shown::placeholder,
+input[class*="pl-12"]:focus:placeholder-shown::placeholder,
+input[class*="pl-11"]:focus:placeholder-shown::placeholder {
+  text-align: center !important;
+  opacity: 0.7;
+}
+
+/* ============================================
+   GLOBAL LIST HEADER STANDARDIZATION
+   ============================================ */
+/* Standardized table headers */
+table thead th,
+.TableHead,
+[class*="TableHead"] {
+  @apply text-xs font-semibold text-slate-400 uppercase tracking-wider;
+  @apply px-4 py-3 text-left;
+}
+
+/* Standardized page titles */
+.page-title {
+  @apply text-3xl font-bold text-slate-100 mb-6;
+}
+
+.page-subtitle {
+  @apply text-sm text-slate-400 mt-1;
+}
+
+/* ============================================
+   GLOBAL BORDER RADIUS STANDARDIZATION
+   ============================================ */
+/* Apply rounded-xl to all main containers, cards, and list wrappers */
+.card,
+[class*="card"],
+[class*="Card"],
+.container,
+[class*="container"],
+[class*="Container"],
+.list-wrapper,
+[class*="list-wrapper"],
+.table-wrapper,
+[class*="table-wrapper"],
+.bg-slate-900,
+.bg-slate-950,
+[class*="rounded"]:not([class*="rounded-full"]):not([class*="rounded-none"]) {
+  border-radius: 0.75rem; /* rounded-xl = 12px */
+}
+
+/* Ensure all main content containers have rounded corners */
+.p-6.rounded-xl,
+[class*="p-6"][class*="rounded"],
+.bg-slate-900\/40,
+.bg-slate-900\/50 {
+  @apply rounded-xl;
+}
+
+/* ============================================
+   GLOBAL Z-INDEX HIERARCHY STANDARDIZATION
+   ============================================ */
+/* Strict vertical hierarchy for all UI layers */
+:root {
+  --z-sidebar: 30;
+  --z-header: 40;
+  --z-main-modal: 50;
+  --z-dropdown-popover: 55;
+  --z-sub-modal: 70;
+}
+
+/* Sidebar - Base layer */
+aside[class*="sidebar"],
+aside[class*="Sidebar"],
+[data-sidebar] {
+  z-index: var(--z-sidebar) !important;
+}
+
+/* Header - Above sidebar */
+header[class*="header"],
+header[class*="Header"],
+[data-header] {
+  z-index: var(--z-header) !important;
+}
+
+/* Main Modals - Above header */
+[role="dialog"][data-radix-dialog-content],
+[data-radix-sheet-content],
+[data-radix-dialog-overlay],
+[data-radix-sheet-overlay] {
+  z-index: var(--z-main-modal) !important;
+}
+
+/* Dropdowns and Popovers - Above modals */
+[role="menu"],
+[role="listbox"],
+[data-radix-dropdown-menu-content],
+[data-radix-popover-content],
+[data-radix-select-content] {
+  z-index: var(--z-dropdown-popover) !important;
+}
+
+/* Sub-Modals (Nested) - Highest priority */
+[role="dialog"][data-nested-modal="true"],
+[data-radix-dialog-content][data-nested-modal="true"],
+[data-radix-sheet-content][data-nested-modal="true"] {
+  z-index: var(--z-sub-modal) !important;
+}
+
+/* Variation Selection Modals - Sub-modal level */
+[data-variation-modal],
+[data-variation-backdrop] {
+  z-index: var(--z-sub-modal) !important;
+}
+
+/* ============================================
+   MODAL BLUR ISOLATION FIX
+   ============================================ */
+/* Prevent blur from affecting modal content */
+[role="dialog"],
+[data-radix-dialog-content],
+[data-radix-sheet-content] {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  isolation: isolate;
+  transform: translateZ(0); /* Force GPU layer separation */
+}
+
+/* Ensure modal overlays have blur, but content does not */
+[data-radix-dialog-overlay],
+[data-radix-sheet-overlay] {
+  isolation: isolate;
+}
+
+/* Prevent body blur when modals are open */
+body:has([role="dialog"][data-state="open"]) {
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* ============================================
+   GLOBAL EVENT PROPAGATION FIX
+   ============================================ */
+/* Prevent nested modal clicks from closing parent modals */
+[role="dialog"][data-nested-modal="true"] *,
+[data-radix-dialog-content][data-nested-modal="true"] *,
+[data-radix-sheet-content][data-nested-modal="true"] * {
+  pointer-events: auto;
+}
+
+/* Ensure modal content stops propagation */
+[role="dialog"] > *,
+[data-radix-dialog-content] > *,
+[data-radix-sheet-content] > * {
+  pointer-events: auto;
+}
+
+/* ============================================
+   TABLE LAYOUT STABILITY FIX
+   ============================================ */
+/* Fixed table layout for stable column widths */
+table[class*="items"],
+table[class*="Items"],
+table[data-table="items"] {
+  table-layout: fixed !important;
+  width: 100% !important;
+}
+
+/* Prevent variation badges from breaking alignment */
+td[data-column="variation"],
+th[data-column="variation"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+
+/* Ensure table cells maintain fixed widths */
+table[class*="items"] td,
+table[class*="items"] th {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Hide browser number input spinners (Up/Down arrows) */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type=number] {
+  -moz-appearance: textfield;
+}
+
+/* ============================================
+   INPUT WITH ICON - AUTO HIDE ON FOCUS/VALUE
+   Global fix for icon overlap with text - COMPREHENSIVE
+   ============================================ */
+
+/* PATTERN 1: .relative.group pattern (most common) */
+.relative.group .absolute {
+  transition: opacity 0.2s ease-in-out !important;
+  pointer-events: none !important;
+}
+
+.relative.group:focus-within .absolute {
+  opacity: 0 !important;
+}
+
+.relative.group:has(input:not(:placeholder-shown)) .absolute {
+  opacity: 0 !important;
+}
+
+/* PATTERN 2: .relative without .group class */
+.relative:has(input):focus-within > .absolute,
+.relative:has(input):focus-within > div.absolute {
+  opacity: 0 !important;
+}
+
+.relative:has(input:not(:placeholder-shown)) > .absolute,
+.relative:has(input:not(:placeholder-shown)) > div.absolute {
+  opacity: 0 !important;
+}
+
+/* PATTERN 3: Direct input siblings with icons */
+input:focus ~ .absolute,
+input:focus ~ div.absolute,
+input:focus ~ span.absolute {
+  opacity: 0 !important;
+}
+
+input:not(:placeholder-shown) ~ .absolute,
+input:not(:placeholder-shown) ~ div.absolute,
+input:not(:placeholder-shown) ~ span.absolute {
+  opacity: 0 !important;
+}
+
+/* PATTERN 4: Parent container patterns */
+div:has(> input:focus) > .absolute,
+div:has(> input:not(:placeholder-shown)) > .absolute {
+  opacity: 0 !important;
+}
+
+/* PATTERN 5: Search-specific patterns */
+.search-bar-container:focus-within .search-icon,
+.search-bar-container:has(input:not(:placeholder-shown)) .search-icon {
+  opacity: 0 !important;
+}
+
+/* PATTERN 6: Any input with left padding (indicating icon space) */
+input[class*="pl-"]:focus ~ *:has(svg),
+input[class*="pl-"]:not(:placeholder-shown) ~ *:has(svg) {
+  opacity: 0 !important;
+}
+
+/* PATTERN 7: Catch-all for any absolute positioned icon near focused input */
+input:focus + div:has(svg),
+input:focus + span:has(svg),
+input:not(:placeholder-shown) + div:has(svg),
+input:not(:placeholder-shown) + span:has(svg) {
+  opacity: 0 !important;
+}
+
+/* PATTERN 8: Icons with specific positioning classes */
+.absolute.left-3:has(svg),
+.absolute.left-4:has(svg),
+.absolute[class*="left-"]:has(svg) {
+  transition: opacity 0.2s ease-in-out !important;
+  pointer-events: none !important;
+}
+
+input:focus ~ .absolute.left-3:has(svg),
+input:focus ~ .absolute.left-4:has(svg),
+input:focus ~ .absolute[class*="left-"]:has(svg),
+input:not(:placeholder-shown) ~ .absolute.left-3:has(svg),
+input:not(:placeholder-shown) ~ .absolute.left-4:has(svg),
+input:not(:placeholder-shown) ~ .absolute[class*="left-"]:has(svg) {
+  opacity: 0 !important;
+}
+
+/* PATTERN 9: Universal catch-all - Hide ANY icon near focused input */
+div:has(> input:focus) > [class*="absolute"],
+div:has(> input:not(:placeholder-shown)) > [class*="absolute"] {
+  opacity: 0 !important;
+}
+
+/* PATTERN 10: Specific for -translate-y-1/2 pattern (very common) */
+.-translate-y-1\/2 {
+  transition: opacity 0.2s ease-in-out !important;
+  pointer-events: none !important;
+}
+
+input:focus ~ .-translate-y-1\/2,
+input:not(:placeholder-shown) ~ .-translate-y-1\/2 {
+  opacity: 0 !important;
+}
+
+div:has(> input:focus) > .-translate-y-1\/2,
+div:has(> input:not(:placeholder-shown)) > .-translate-y-1\/2 {
+  opacity: 0 !important;
+}
+
+/* PATTERN 11: Target elements with left-3, left-4, etc. */
+.left-3, .left-4, [class*="left-"] {
+  transition: opacity 0.2s ease-in-out !important;
+}
+
+div:has(> input:focus) > .left-3,
+div:has(> input:focus) > .left-4,
+div:has(> input:focus) > [class*="left-"],
+div:has(> input:not(:placeholder-shown)) > .left-3,
+div:has(> input:not(:placeholder-shown)) > .left-4,
+div:has(> input:not(:placeholder-shown)) > [class*="left-"] {
+  opacity: 0 !important;
+}
+
+/* PATTERN 12: Most aggressive - target any child with SVG in containers with focused input */
+div:has(input:focus) > *:has(svg),
+div:has(input:not(:placeholder-shown)) > *:has(svg) {
+  opacity: 0 !important;
+  transition: opacity 0.2s ease-in-out !important;
+}
+
+/* But preserve SVG in buttons and the input itself */
+button svg,
+button:has(svg),
+input svg,
+input:has(svg),
+[role="button"] svg {
+  opacity: 1 !important;
+}
+
+/* PATTERN 13: JavaScript detection class (will be added dynamically) */
+.input-has-value ~ .absolute,
+.input-focused ~ .absolute {
+  opacity: 0 !important;
+}
+

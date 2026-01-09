@@ -49,7 +49,14 @@ export function ProductActionsMenu({
         </DropdownMenuItem>
       )}
       {onEdit && (
-        <DropdownMenuItem onClick={() => onEdit(product)}>
+        <DropdownMenuItem 
+          onClick={(e) => {
+            // Immediately close dropdown and prevent event bubbling
+            e?.stopPropagation?.();
+            // Call onEdit handler
+            onEdit(product);
+          }}
+        >
           <Edit size={14} className="inline mr-2" />
           Edit Product
         </DropdownMenuItem>

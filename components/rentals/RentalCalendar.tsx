@@ -54,7 +54,8 @@ export const RentalCalendar = ({ bookings, onDateClick }: RentalCalendarProps) =
         // Get product IDs from bookings
         const bookingProductIds = bookings
           .map(b => {
-            const pid = typeof b.product_id === 'number' ? b.product_id : parseInt(b.product_id?.toString() || '0');
+            const productId = b.product_id as any;
+            const pid = typeof productId === 'number' ? productId : parseInt(String(productId || '0'));
             return pid > 0 ? pid : null;
           })
           .filter((id): id is number => id !== null && id > 0);

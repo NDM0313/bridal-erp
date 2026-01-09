@@ -81,7 +81,7 @@ export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddCon
                 mobile: fullContact.mobile || '',
                 email: fullContact.email || '',
                 opening_balance: 0,
-                credit_limit: parseFloat(fullContact.credit_limit?.toString() || '0') || 0,
+                credit_limit: 0, // Note: credit_limit column doesn't exist in contacts table
                 payment_terms: fullContact.pay_term_number && fullContact.pay_term_type
                   ? `Net ${fullContact.pay_term_number} ${fullContact.pay_term_type}`
                   : '',
@@ -199,9 +199,10 @@ export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddCon
       };
 
       // Add optional fields if provided
-      if (formData.credit_limit > 0) {
-        contactData.credit_limit = formData.credit_limit.toString();
-      }
+      // Note: credit_limit column doesn't exist in contacts table, so we skip it
+      // if (formData.credit_limit > 0) {
+      //   contactData.credit_limit = formData.credit_limit.toString();
+      // }
       if (formData.tax_number) {
         contactData.tax_number = formData.tax_number.trim();
       }

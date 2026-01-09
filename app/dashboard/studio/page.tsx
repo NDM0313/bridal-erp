@@ -144,14 +144,14 @@ export default function StudioPage() {
 
   return (
     <ModernDashboardLayout>
-      <div className="space-y-6 p-6">
+      <div className="space-y-6 p-6 standard-page-container">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between animate-entrance">
           <div>
             <h1 className="text-2xl font-bold text-white">Production Pipeline</h1>
             <p className="text-sm text-gray-400 mt-1">Track orders through manufacturing stages.</p>
           </div>
-          <Button variant="primary" onClick={handleNewOrder} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white">
+          <Button variant="primary" onClick={handleNewOrder} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white transition-standard">
             <Plus size={18} />
             New Order
           </Button>
@@ -198,7 +198,7 @@ export default function StudioPage() {
           </div>
         ) : (
           <div className="flex gap-4 overflow-x-auto pb-4">
-            {KANBAN_COLUMNS.map((column) => {
+            {KANBAN_COLUMNS.map((column, index) => {
               const columnOrders = getOrdersForColumn(column.status);
               const Icon = column.icon;
 
@@ -206,9 +206,10 @@ export default function StudioPage() {
                 <div
                   key={column.id}
                   className={cn(
-                    'flex-shrink-0 w-80 rounded-lg border p-4 space-y-3 min-h-[500px]',
+                    'flex-shrink-0 w-80 rounded-lg border p-4 space-y-3 min-h-[500px] transition-standard hover-lift',
                     column.bgColor,
-                    column.borderColor
+                    column.borderColor,
+                    index === 0 ? 'animate-entrance' : index === 1 ? 'animate-entrance-delay-1' : 'animate-entrance-delay-2'
                   )}
                 >
                   {/* Column Header */}
@@ -223,7 +224,7 @@ export default function StudioPage() {
                       <span className="text-xs font-bold px-2 py-1 rounded-full bg-gray-800 text-gray-400">
                         {columnOrders.length}
                       </span>
-                      <button className="text-gray-400 hover:text-white">
+                      <button className="text-gray-400 hover:text-white transition-standard">
                         <MoreVertical size={16} />
                       </button>
                     </div>
@@ -252,7 +253,7 @@ export default function StudioPage() {
                           <div
                             key={order.id}
                             onClick={() => handleOrderClick(order)}
-                            className="bg-gray-800 border border-gray-700 rounded-lg p-4 cursor-pointer hover:border-gray-600 hover:shadow-lg transition-all"
+                            className="bg-gray-800 border border-gray-700 rounded-lg p-4 cursor-pointer hover:border-gray-600 hover:shadow-lg transition-standard hover-lift"
                           >
                             {/* Order ID */}
                             <div className="flex items-center justify-between mb-2">
@@ -264,7 +265,7 @@ export default function StudioPage() {
 
                             {/* Product Name */}
                             <p className="text-sm font-bold text-white mb-2">
-                              {order.item_name || 'Custom Order'}
+                              {order.description || order.order_no || 'Custom Order'}
                             </p>
 
                             {/* Customer Name */}
