@@ -31,6 +31,7 @@ interface ContactWithBalance extends Contact {
   payables?: number;
   balance?: number;
   status?: 'active' | 'inactive';
+  category?: string; // Worker category (Dyer, Tailor, etc.)
 }
 
 interface ContactStats {
@@ -48,7 +49,7 @@ export default function ContactsPage() {
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<ContactWithBalance | null>(null);
-  const [activeTab, setActiveTab] = useState<'customer' | 'supplier' | 'all'>('all');
+  const [activeTab, setActiveTab] = useState<'customer' | 'supplier' | 'worker' | 'all'>('all');
   const [stats, setStats] = useState<ContactStats>({
     totalReceivables: 0,
     totalPayables: 0,
@@ -57,6 +58,39 @@ export default function ContactsPage() {
   useEffect(() => {
     loadContacts();
   }, []);
+
+  // Listen for edit-contact event (from duplicate detection)
+  useEffect(() => {
+    const handleEditContact = async (event: CustomEvent) => {
+      const contactId = event.detail?.contactId;
+      if (contactId) {
+        // Find contact in current list
+        let contact = contacts.find(c => c.id === contactId);
+        
+        // If not found, reload contacts
+        if (!contact) {
+          await loadContacts();
+          // Wait a bit for state update, then find again
+          setTimeout(() => {
+            const updatedContact = contacts.find(c => c.id === contactId);
+            if (updatedContact) {
+              handleEdit(updatedContact);
+            } else {
+              // Fetch directly from database
+              handleEditById(contactId);
+            }
+          }, 100);
+        } else {
+          handleEdit(contact);
+        }
+      }
+    };
+
+    window.addEventListener('edit-contact', handleEditContact as EventListener);
+    return () => {
+      window.removeEventListener('edit-contact', handleEditContact as EventListener);
+    };
+  }, [contacts]);
 
   const loadContacts = async () => {
     try {
@@ -150,16 +184,23 @@ export default function ContactsPage() {
               console.warn(`Error calculating payables for contact ${c.id}:`, err);
             }
 
+            // Extract category for workers (stored in address_line_1)
+            let category: string | undefined = undefined;
+            if (c.type === 'worker' && c.address_line_1) {
+              category = c.address_line_1.trim();
+            }
+
             return {
               id: c.id,
               name: c.name,
               mobile: c.mobile || undefined,
               email: c.email || undefined,
-              type: c.type as 'customer' | 'supplier' | 'both',
+              type: c.type as 'customer' | 'supplier' | 'worker' | 'both',
               receivables,
               payables,
               balance: receivables - payables,
               status: 'active' as const,
+              category,
             };
           })
         );
@@ -195,8 +236,8 @@ export default function ContactsPage() {
   };
 
   const handleViewDetails = (contact: ContactWithBalance) => {
-    setSelectedContact(contact);
-    setIsViewModalOpen(true);
+    // Navigate to contact detail page
+    window.location.href = `/dashboard/contacts/${contact.id}`;
   };
 
   const handleEdit = async (contact: ContactWithBalance) => {
@@ -219,9 +260,39 @@ export default function ContactsPage() {
           name: fullContact.name,
           mobile: fullContact.mobile || undefined,
           email: fullContact.email || undefined,
-          type: fullContact.type as 'customer' | 'supplier' | 'both',
+          type: fullContact.type as 'customer' | 'supplier' | 'worker' | 'both',
         };
         setSelectedContact({ ...contact, ...contactData });
+        setIsEditModalOpen(true);
+      }
+    } catch (err) {
+      toast.error('Failed to load contact details');
+    }
+  };
+
+  const handleEditById = async (contactId: number) => {
+    try {
+      // Fetch contact directly by ID
+      const { data: fullContact, error } = await supabase
+        .from('contacts')
+        .select('*')
+        .eq('id', contactId)
+        .single();
+
+      if (error) {
+        toast.error('Failed to load contact details');
+        return;
+      }
+
+      if (fullContact) {
+        const contactData: Contact = {
+          id: fullContact.id,
+          name: fullContact.name,
+          mobile: fullContact.mobile || undefined,
+          email: fullContact.email || undefined,
+          type: fullContact.type as 'customer' | 'supplier' | 'worker' | 'both',
+        };
+        setSelectedContact(contactData as ContactWithBalance);
         setIsEditModalOpen(true);
       }
     } catch (err) {
@@ -279,9 +350,9 @@ export default function ContactsPage() {
         return;
       }
 
-      // Open ledger in new window or navigate
-      const ledgerUrl = `/dashboard/contacts/${contact.id}/ledger`;
-      window.open(ledgerUrl, '_blank');
+      // Navigate to contact detail page
+      const contactUrl = `/dashboard/contacts/${contact.id}`;
+      window.location.href = contactUrl;
     } catch (err) {
       console.error('Error loading ledger:', err);
       toast.error('Failed to load ledger');
@@ -383,6 +454,12 @@ export default function ContactsPage() {
           Customer
         </Badge>
       );
+    } else if (type === 'worker') {
+      return (
+        <Badge variant="outline" className="bg-green-500/10 text-green-400 border-green-500/20">
+          Worker
+        </Badge>
+      );
     } else {
       return (
         <Badge variant="outline" className="bg-gray-500/10 text-gray-400 border-gray-500/20">
@@ -401,14 +478,18 @@ export default function ContactsPage() {
     if (activeTab === 'supplier' && contact.type !== 'supplier' && contact.type !== 'both') {
       return false;
     }
+    if (activeTab === 'worker' && contact.type !== 'worker') {
+      return false;
+    }
     
-    // Search filter
+    // Search filter (includes category for workers)
     if (!searchTerm) return true;
     const term = searchTerm.toLowerCase();
     return (
       contact.name.toLowerCase().includes(term) ||
       contact.mobile?.toLowerCase().includes(term) ||
       contact.email?.toLowerCase().includes(term) ||
+      (contact.type === 'worker' && contact.category?.toLowerCase().includes(term)) ||
       false
     );
   });
@@ -504,6 +585,17 @@ export default function ContactsPage() {
           >
             Suppliers
           </button>
+          <button
+            onClick={() => setActiveTab('worker')}
+            className={cn(
+              'flex-1 px-4 py-2.5 rounded-lg font-medium transition-standard',
+              activeTab === 'worker'
+                ? 'bg-green-600 text-white'
+                : 'text-gray-400 hover:text-white hover:bg-gray-800'
+            )}
+          >
+            Workers
+          </button>
         </div>
 
         {/* Search Bar */}
@@ -561,6 +653,7 @@ export default function ContactsPage() {
                 <TableRow className="bg-gray-950/50 border-gray-800">
                   <TableHead>Contact</TableHead>
                   <TableHead>Type</TableHead>
+                  <TableHead>Category</TableHead>
                   <TableHead>Phone</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Receivables</TableHead>
@@ -594,6 +687,15 @@ export default function ContactsPage() {
                         </div>
                       </TableCell>
                       <TableCell>{getTypeBadge(contact.type)}</TableCell>
+                      <TableCell>
+                        {contact.type === 'worker' && contact.category ? (
+                          <Badge variant="outline" className="bg-green-500/10 text-green-400 border-green-500/20">
+                            {contact.category}
+                          </Badge>
+                        ) : (
+                          <span className="text-gray-500">—</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-gray-400 text-sm">
                         {contact.mobile || '—'}
                       </TableCell>

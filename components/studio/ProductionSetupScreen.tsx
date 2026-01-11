@@ -52,10 +52,14 @@ export default function ProductionSetupScreen({
   const [saving, setSaving] = useState(false);
   const [showAddVendor, setShowAddVendor] = useState(false);
   const [activeStepForVendor, setActiveStepForVendor] = useState<string | null>(null);
-  const [newVendor, setNewVendor] = useState({
+  const [newVendor, setNewVendor] = useState<{
+    name: string;
+    mobile: string;
+    type: 'supplier' | 'worker' | 'both';
+  }>({
     name: '',
     mobile: '',
-    type: 'supplier' as const,
+    type: 'supplier',
   });
 
   // Step configuration
@@ -83,6 +87,18 @@ export default function ProductionSetupScreen({
   useEffect(() => {
     fetchSetupData();
   }, [saleId]);
+
+  // Debug: Log workers when they change
+  useEffect(() => {
+    console.log('Workers state updated:', workers);
+    console.log('Workers count:', workers.length);
+  }, [workers]);
+
+  // Debug: Log vendors when they change
+  useEffect(() => {
+    console.log('Vendors state updated:', vendors);
+    console.log('Vendors count:', vendors.length);
+  }, [vendors]);
 
   const fetchSetupData = async () => {
     try {
@@ -132,47 +148,90 @@ export default function ProductionSetupScreen({
         .single();
 
       if (profile) {
-        const { data: contacts } = await supabase
+        // Fetch vendors (suppliers)
+        const { data: vendorsData, error: vendorsError } = await supabase
           .from('contacts')
           .select('id, name, type, address_line_1')
           .eq('business_id', profile.business_id)
-          .in('type', ['supplier', 'both']) // Vendors and workers are suppliers
-          .is('deleted_at', null);
+          .in('type', ['supplier', 'both']);
 
-        if (contacts) {
-          // Separate vendors and workers
-          const vendorsList: Vendor[] = [];
-          const workersList: Vendor[] = [];
+        if (vendorsError) {
+          console.error('Error fetching vendors:', vendorsError);
+        } else {
+          console.log('Vendors query result:', vendorsData);
+        }
 
-          contacts.forEach((c: any) => {
-            // Extract role from address_line_1
+        // Fetch workers (separate type)
+        const { data: workersData, error: workersError } = await supabase
+          .from('contacts')
+          .select('id, name, type, address_line_1')
+          .eq('business_id', profile.business_id)
+          .eq('type', 'worker');
+
+        if (workersError) {
+          console.error('Error fetching workers:', workersError);
+        } else {
+          console.log('Workers query result:', workersData);
+          console.log('Workers count:', workersData?.length || 0);
+        }
+
+        if (workersError) {
+          console.error('Error fetching workers:', workersError);
+        } else {
+          console.log('Workers query result:', workersData);
+        }
+
+        if (vendorsData) {
+          const vendorsList: Vendor[] = vendorsData.map((c: any) => {
+            // Extract role from address_line_1 if present
             let role = undefined;
-            if (c.address_line_1) {
-              if (c.address_line_1.startsWith('Worker:')) {
-                role = c.address_line_1.replace('Worker: ', '');
-              } else if (c.address_line_1.startsWith('Role:')) {
-                role = c.address_line_1.replace('Role: ', '');
-              }
+            if (c.address_line_1 && c.address_line_1.startsWith('Role:')) {
+              role = c.address_line_1.replace('Role: ', '');
             }
 
-            const contact: Vendor = {
+            return {
               id: c.id,
               name: c.name,
               type: c.type,
               role,
+              is_worker: false,
             };
-
-            // Separate based on prefix
-            if (c.address_line_1 && c.address_line_1.startsWith('Worker:')) {
-              contact.is_worker = true;
-              workersList.push(contact);
-            } else {
-              vendorsList.push(contact);
-            }
           });
-
           setVendors(vendorsList);
+        }
+
+        if (workersData) {
+          const workersList: Vendor[] = workersData.map((c: any) => {
+            // Extract category from address_line_1
+            // Format can be: "Tailor", "Dyer", "Category: Tailor", "Worker: Tailor", or "Role: Tailor"
+            let role = undefined;
+            if (c.address_line_1) {
+              const category = c.address_line_1.trim();
+              // Remove common prefixes if present
+              if (category.startsWith('Category:')) {
+                role = category.replace(/^Category:\s*/i, '').trim();
+              } else if (category.startsWith('Worker:')) {
+                role = category.replace(/^Worker:\s*/i, '').trim();
+              } else if (category.startsWith('Role:')) {
+                role = category.replace(/^Role:\s*/i, '').trim();
+              } else {
+                // Direct category value (Tailor, Dyer, etc.)
+                role = category;
+              }
+            }
+
+            return {
+              id: c.id,
+              name: c.name,
+              type: c.type,
+              role: role || undefined, // Show category as role
+              is_worker: true,
+            };
+          });
+          console.log('Loaded workers:', workersList);
           setWorkers(workersList);
+        } else {
+          console.log('No workers data returned from query');
         }
       }
 
@@ -233,40 +292,80 @@ export default function ProductionSetupScreen({
     }
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) {
+        console.error('Session error:', sessionError);
+        toast.error('Authentication error: ' + sessionError.message);
+        return;
+      }
       if (!session) {
-        toast.error('Not authenticated');
+        toast.error('Not authenticated. Please log in.');
         return;
       }
 
-      const { data: profile } = await supabase
+      console.log('User authenticated:', session.user.id);
+
+      const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
         .select('business_id')
         .eq('user_id', session.user.id)
         .single();
 
-      if (!profile) {
-        toast.error('Profile not found');
+      if (profileError) {
+        console.error('Profile error:', profileError);
+        toast.error('Failed to fetch profile: ' + profileError.message);
         return;
       }
+
+      if (!profile || !profile.business_id) {
+        toast.error('Business profile not found');
+        return;
+      }
+
+      console.log('Business ID:', profile.business_id);
+      console.log('Creating contact with type:', newVendor.type);
+
+      // Prepare contact data
+      const contactData = {
+        business_id: profile.business_id,
+        name: newVendor.name.trim(),
+        mobile: newVendor.mobile.trim() || null,
+        type: newVendor.type,
+        created_by: session.user.id,
+      };
+
+      console.log('Inserting contact:', contactData);
 
       // Add vendor to contacts
       const { data: vendor, error } = await supabase
         .from('contacts')
-        .insert({
-          business_id: profile.business_id,
-          name: newVendor.name,
-          mobile: newVendor.mobile || null,
-          type: newVendor.type,
-          created_by: session.user.id,
-        })
+        .insert(contactData)
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('=== SUPABASE INSERT ERROR ===');
+        console.error('Full error object:', JSON.stringify(error, null, 2));
+        console.error('Error message:', error.message);
+        console.error('Error code:', error.code);
+        console.error('Error details:', error.details);
+        console.error('Error hint:', error.hint);
+        console.error('=============================');
+        throw error;
+      }
 
-      // Add to vendors list
-      setVendors([...vendors, { id: vendor.id, name: vendor.name }]);
+      if (!vendor) {
+        throw new Error('Contact created but no data returned');
+      }
+
+      console.log('Contact created successfully:', vendor);
+
+      // Add to appropriate list based on type
+      if (vendor.type === 'worker') {
+        setWorkers([...workers, { id: vendor.id, name: vendor.name, type: 'worker', is_worker: true }]);
+      } else {
+        setVendors([...vendors, { id: vendor.id, name: vendor.name, type: vendor.type, is_worker: false }]);
+      }
 
       // Auto-select for the step
       if (activeStepForVendor) {
@@ -278,10 +377,55 @@ export default function ProductionSetupScreen({
       setShowAddVendor(false);
       setActiveStepForVendor(null);
 
-      toast.success(`Vendor "${vendor.name}" added successfully`);
+      toast.success(`${vendor.type === 'worker' ? 'Worker' : 'Supplier'} "${vendor.name}" added successfully`);
     } catch (err: any) {
-      console.error('Failed to add vendor:', err);
-      toast.error(err.message || 'Failed to add vendor');
+      console.error('=== CATCH BLOCK ERROR ===');
+      console.error('Full error:', err);
+      console.error('Error type:', typeof err);
+      console.error('Error keys:', err ? Object.keys(err) : 'null');
+      console.error('Error.message:', err?.message);
+      console.error('Error.code:', err?.code);
+      console.error('Error.details:', err?.details);
+      console.error('Error.hint:', err?.hint);
+      console.error('JSON stringify:', JSON.stringify(err, null, 2));
+      console.error('========================');
+      
+      let errorMessage = 'Failed to add contact';
+      
+      if (err?.message) {
+        errorMessage = err.message;
+        console.log('Using err.message:', errorMessage);
+      } else if (err?.error?.message) {
+        errorMessage = err.error.message;
+        console.log('Using err.error.message:', errorMessage);
+      } else if (typeof err === 'string') {
+        errorMessage = err;
+        console.log('Using string error:', errorMessage);
+      }
+      
+      // Check for common issues
+      if (err?.code === '42501' || err?.message?.includes('row-level security')) {
+        errorMessage = 'Permission denied. Please check database RLS policies for contacts table.';
+        console.log('RLS error detected');
+      } else if (err?.code === '23505') {
+        errorMessage = 'A contact with this information already exists.';
+        console.log('Duplicate detected');
+      } else if (err?.code === '23503') {
+        errorMessage = 'Invalid business or user reference.';
+        console.log('Foreign key error');
+      } else if (err?.code === '23502') {
+        errorMessage = 'Required field is missing (check business_id, name, or type).';
+        console.log('Not null violation');
+      } else if (err?.code === '23514') {
+        errorMessage = 'Invalid contact type. Database constraint needs updating. Run: database/FIX_WORKER_TYPE_CONSTRAINT.sql';
+        console.log('CHECK constraint violation - type not allowed');
+      } else if (err?.code) {
+        errorMessage = `Database error (code: ${err.code}): ${err.message || 'Unknown error'}`;
+        console.log('Generic database error with code');
+      }
+      
+      console.log('Final error message:', errorMessage);
+      toast.error(errorMessage);
     }
   };
 
@@ -525,8 +669,8 @@ export default function ProductionSetupScreen({
                                 {/* Workers Section */}
                                 {workers.length > 0 && (
                                   <>
-                                    <div className="px-2 py-1.5 text-xs font-semibold text-purple-400 uppercase tracking-wider bg-purple-500/10 border-t border-b border-purple-500/20">
-                                      Workers (Internal)
+                                    <div className="px-2 py-1.5 text-xs font-semibold text-green-400 uppercase tracking-wider bg-green-500/10 border-t border-b border-green-500/20">
+                                      Workers ({workers.length})
                                     </div>
                                     {workers.map(w => (
                                       <SelectItem 
@@ -535,9 +679,11 @@ export default function ProductionSetupScreen({
                                         className="pl-6"
                                       >
                                         <div className="flex items-center gap-2">
-                                          <span className="text-purple-400">👷</span>
-                                          {w.name}
-                                          {w.role && <span className="text-xs text-gray-500">({w.role})</span>}
+                                          <span className="text-green-400">👷</span>
+                                          <span>{w.name}</span>
+                                          {w.role && (
+                                            <span className="text-xs text-gray-400 ml-1">({w.role})</span>
+                                          )}
                                         </div>
                                       </SelectItem>
                                     ))}
@@ -569,8 +715,10 @@ export default function ProductionSetupScreen({
                                 {/* No data message */}
                                 {vendors.length === 0 && workers.length === 0 && (
                                   <div className="px-4 py-6 text-center text-gray-500 text-sm">
-                                    No vendors or workers found.<br />
-                                    Click "Add New" to create one.
+                                    <p className="mb-2">No vendors or workers found.</p>
+                                    <p className="text-xs text-gray-600">
+                                      Click "Add New Vendor/Worker" above to create one.
+                                    </p>
                                   </div>
                                 )}
                               </SelectContent>
@@ -647,7 +795,9 @@ export default function ProductionSetupScreen({
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-lg shadow-xl max-w-md w-full">
             <div className="p-6">
-              <h3 className="text-lg font-semibold text-white mb-4">Add New Vendor/Worker</h3>
+              <h3 className="text-lg font-semibold text-white mb-4">
+                Add New {newVendor.type === 'worker' ? 'Worker' : 'Supplier'}
+              </h3>
               
               <div className="space-y-4">
                 {/* Name */}
@@ -678,18 +828,30 @@ export default function ProductionSetupScreen({
                 {/* Type */}
                 <div>
                   <Label className="text-gray-400 text-xs mb-2">Type</Label>
-                  <Select
-                    value={newVendor.type}
-                    onValueChange={(value: 'supplier' | 'both') => setNewVendor({ ...newVendor, type: value })}
-                  >
-                    <SelectTrigger className="bg-gray-800 border-gray-700 text-white">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="bg-gray-800 border-gray-700">
-                      <SelectItem value="supplier">Supplier/Vendor</SelectItem>
-                      <SelectItem value="both">Both (Supplier & Customer)</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNewVendor({ ...newVendor, type: 'supplier' })}
+                      className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        newVendor.type === 'supplier'
+                          ? 'bg-purple-600 text-white'
+                          : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                      }`}
+                    >
+                      Supplier
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewVendor({ ...newVendor, type: 'worker' })}
+                      className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        newVendor.type === 'worker'
+                          ? 'bg-green-600 text-white'
+                          : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                      }`}
+                    >
+                      Worker
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -710,7 +872,7 @@ export default function ProductionSetupScreen({
                   className="bg-indigo-600 hover:bg-indigo-500"
                 >
                   <Plus size={16} className="mr-2" />
-                  Add Vendor
+                  Add {newVendor.type === 'worker' ? 'Worker' : 'Supplier'}
                 </Button>
               </div>
             </div>

@@ -10,6 +10,7 @@ import { X, ChevronDown, ChevronUp, HelpCircle, User } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { supabase } from '@/utils/supabase/client';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -22,10 +23,20 @@ interface AddContactModalProps {
   editContact?: Contact | null;
 }
 
+interface DuplicateContact {
+  id: number;
+  name: string;
+  mobile: string;
+  type: string;
+  email?: string;
+}
+
 export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddContactModalProps) {
   const isEditMode = !!editContact;
-  const [contactType, setContactType] = useState<'customer' | 'supplier'>('customer');
+  const [contactType, setContactType] = useState<'customer' | 'supplier' | 'worker'>('customer');
   const [loading, setLoading] = useState(false);
+  const [checkingDuplicate, setCheckingDuplicate] = useState(false);
+  const [duplicateContact, setDuplicateContact] = useState<DuplicateContact | null>(null);
   
   // Collapsible sections state
   const [basicInfoExpanded, setBasicInfoExpanded] = useState(true);
@@ -38,6 +49,7 @@ export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddCon
     business_name: '',
     mobile: '',
     email: '',
+    worker_category: '', // Dyer, Tailor, Embroiderer, Handwork, etc.
     // Financial Details
     opening_balance: 0,
     credit_limit: 0,
@@ -76,10 +88,21 @@ export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddCon
             }
 
             if (fullContact) {
+              // Extract worker category from address_line_1 if it's a worker
+              let workerCategory = '';
+              if (fullContact.type === 'worker' && fullContact.address_line_1) {
+                // Check if address_line_1 contains category (format: "Category: Dyer" or just "Dyer")
+                const categoryMatch = fullContact.address_line_1.match(/^(?:Category:\s*)?(.+)$/i);
+                if (categoryMatch) {
+                  workerCategory = categoryMatch[1].trim();
+                }
+              }
+              
               setFormData({
                 business_name: fullContact.name || '',
                 mobile: fullContact.mobile || '',
                 email: fullContact.email || '',
+                worker_category: workerCategory,
                 opening_balance: 0,
                 credit_limit: 0, // Note: credit_limit column doesn't exist in contacts table
                 payment_terms: fullContact.pay_term_number && fullContact.pay_term_type
@@ -88,14 +111,18 @@ export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddCon
                 tax_id: '',
                 tax_number: fullContact.tax_number || '',
                 tax_type: '',
-                address_line_1: fullContact.address_line_1 || '',
+                address_line_1: fullContact.type === 'worker' ? '' : (fullContact.address_line_1 || ''),
                 address_line_2: fullContact.address_line_2 || '',
                 city: fullContact.city || '',
                 state: fullContact.state || '',
                 zip_code: fullContact.zip_code || '',
                 country: fullContact.country || '',
               });
-              setContactType(fullContact.type === 'supplier' ? 'supplier' : 'customer');
+              setContactType(
+                fullContact.type === 'supplier' ? 'supplier' : 
+                fullContact.type === 'worker' ? 'worker' : 
+                'customer'
+              );
             }
           } catch (err) {
             console.error('Error loading contact data:', err);
@@ -109,6 +136,7 @@ export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddCon
           business_name: '',
           mobile: '',
           email: '',
+          worker_category: '',
           opening_balance: 0,
           credit_limit: 0,
           payment_terms: '',
@@ -125,12 +153,124 @@ export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddCon
         setContactType('customer');
       }
       
+      // Reset duplicate state when modal opens/closes
+      setDuplicateContact(null);
+      
       setBasicInfoExpanded(true);
       setFinancialExpanded(false);
       setTaxExpanded(false);
       setBillingExpanded(false);
     }
   }, [isOpen, editContact]);
+
+  // Audit log function for duplicate attempts
+  const logDuplicateAttempt = async (attemptedMobile: string, existingContactId: number, userId: string) => {
+    try {
+      // Log to console (can be extended to log to database/analytics)
+      console.warn('Duplicate contact attempt logged:', {
+        attempted_mobile: attemptedMobile,
+        existing_contact_id: existingContactId,
+        user_id: userId,
+        timestamp: new Date().toISOString(),
+        action: 'duplicate_detected',
+      });
+
+      // Optional: Log to Supabase audit table if exists
+      // await supabase.from('audit_logs').insert({
+      //   action: 'duplicate_contact_attempt',
+      //   user_id: userId,
+      //   metadata: { attempted_mobile, existing_contact_id: existingContactId },
+      //   created_at: new Date().toISOString(),
+      // });
+    } catch (err) {
+      console.error('Error logging duplicate attempt:', err);
+    }
+  };
+
+  // Check for duplicate contact by mobile number (client-side pre-check)
+  const checkDuplicate = async (mobile: string) => {
+    if (!mobile.trim() || isEditMode) {
+      setDuplicateContact(null);
+      return;
+    }
+
+    try {
+      setCheckingDuplicate(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('business_id')
+        .eq('user_id', session.user.id)
+        .single();
+
+      if (!profile?.business_id) return;
+
+      // Normalize mobile number (remove spaces, dashes, etc.)
+      const normalizedMobile = mobile.replace(/\D/g, '');
+
+      // Minimum length check (at least 10 digits)
+      if (normalizedMobile.length < 10) {
+        setDuplicateContact(null);
+        return;
+      }
+
+      // Check for existing contact with same mobile
+      const { data: existingContact, error } = await supabase
+        .from('contacts')
+        .select('id, name, mobile, type, email')
+        .eq('business_id', profile.business_id)
+        .eq('mobile', normalizedMobile)
+        .limit(1)
+        .single();
+
+      if (error && error.code !== 'PGRST116') {
+        // PGRST116 = no rows returned (expected when no duplicate)
+        console.error('Error checking duplicate:', error);
+        return;
+      }
+
+      if (existingContact) {
+        // Log duplicate attempt for audit
+        await logDuplicateAttempt(normalizedMobile, existingContact.id, session.user.id);
+
+        setDuplicateContact({
+          id: existingContact.id,
+          name: existingContact.name,
+          mobile: existingContact.mobile,
+          type: existingContact.type,
+          email: existingContact.email,
+        });
+
+        // Show toast notification
+        toast.warning(`Contact with mobile ${normalizedMobile} already exists`, {
+          description: `Existing contact: ${existingContact.name}`,
+          duration: 5000,
+        });
+      } else {
+        setDuplicateContact(null);
+      }
+    } catch (err) {
+      console.error('Error in duplicate check:', err);
+    } finally {
+      setCheckingDuplicate(false);
+    }
+  };
+
+  // Debounced duplicate check on mobile input change
+  useEffect(() => {
+    if (!formData.mobile.trim() || isEditMode) {
+      setDuplicateContact(null);
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      checkDuplicate(formData.mobile);
+    }, 500); // 500ms debounce
+
+    return () => clearTimeout(timeoutId);
+  }, [formData.mobile, isEditMode]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -143,6 +283,18 @@ export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddCon
     
     if (!formData.mobile.trim()) {
       toast.error('Mobile Number is required');
+      return;
+    }
+
+    // Worker category validation
+    if (contactType === 'worker' && !formData.worker_category.trim()) {
+      toast.error('Worker category is required');
+      return;
+    }
+
+    // Prevent submission if duplicate detected
+    if (duplicateContact && !isEditMode) {
+      toast.error('Please resolve the duplicate contact issue before saving');
       return;
     }
 
@@ -189,7 +341,10 @@ export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddCon
         name: formData.business_name.trim(),
         mobile: mobileValue,
         email: formData.email.trim() || null,
-        address_line_1: formData.address_line_1.trim() || null,
+        // For workers, save category in address_line_1; for others, save address
+        address_line_1: contactType === 'worker' && formData.worker_category
+          ? formData.worker_category.trim()
+          : (formData.address_line_1.trim() || null),
         address_line_2: formData.address_line_2.trim() || null,
         city: formData.city.trim() || null,
         state: formData.state.trim() || null,
@@ -227,6 +382,46 @@ export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddCon
 
       // Ensure business_id is an integer
       contactData.business_id = parseInt(profile.business_id.toString(), 10);
+
+      // Server-side duplicate check (before insert)
+      if (!isEditMode) {
+        const normalizedMobile = mobileValue.replace(/\D/g, '');
+        const { data: existingContact, error: duplicateError } = await supabase
+          .from('contacts')
+          .select('id, name, mobile, type, email')
+          .eq('business_id', profile.business_id)
+          .eq('mobile', normalizedMobile)
+          .limit(1)
+          .single();
+
+        if (duplicateError && duplicateError.code !== 'PGRST116') {
+          console.error('Error checking duplicate:', duplicateError);
+        }
+
+        if (existingContact) {
+          // Log duplicate attempt for audit
+          console.warn('Duplicate contact attempt:', {
+            attempted_mobile: normalizedMobile,
+            existing_contact_id: existingContact.id,
+            existing_contact_name: existingContact.name,
+            user_id: session.user.id,
+            timestamp: new Date().toISOString(),
+          });
+
+          // Show duplicate contact info
+          setDuplicateContact({
+            id: existingContact.id,
+            name: existingContact.name,
+            mobile: existingContact.mobile,
+            type: existingContact.type,
+            email: existingContact.email,
+          });
+
+          toast.error(`Contact with mobile ${normalizedMobile} already exists`);
+          setLoading(false);
+          return;
+        }
+      }
 
       let newContact;
       let error;
@@ -272,6 +467,34 @@ export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddCon
           errorMsg = `Error code: ${error.code}`;
         }
         
+        // If duplicate error (unique constraint violation)
+        if (error.code === '23505' || error.message?.includes('duplicate') || error.message?.includes('unique')) {
+          // Extract mobile from error or check again
+          const normalizedMobile = mobileValue.replace(/\D/g, '');
+          const { data: existingContact } = await supabase
+            .from('contacts')
+            .select('id, name, mobile, type, email')
+            .eq('business_id', profile.business_id)
+            .eq('mobile', normalizedMobile)
+            .limit(1)
+            .single();
+
+          if (existingContact) {
+            setDuplicateContact({
+              id: existingContact.id,
+              name: existingContact.name,
+              mobile: existingContact.mobile,
+              type: existingContact.type,
+              email: existingContact.email,
+            });
+          }
+
+          errorMsg = `Contact with mobile number ${normalizedMobile} already exists.`;
+          toast.error(errorMsg);
+          setLoading(false);
+          return;
+        }
+        
         // If RLS error, provide helpful message
         if (error.code === '42501' || error.message?.includes('row-level security')) {
           errorMsg = 'Permission denied: Row-level security policy is blocking this operation. Please run the SQL script in database/FIX_CONTACTS_RLS.sql to fix the RLS policy, or contact your administrator.';
@@ -286,7 +509,7 @@ export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddCon
           name: newContact.name,
           mobile: newContact.mobile || undefined,
           email: newContact.email || undefined,
-          type: newContact.type as 'customer' | 'supplier' | 'both',
+          type: newContact.type as 'customer' | 'supplier' | 'worker' | 'both',
         };
 
         onSave(contact);
@@ -325,7 +548,7 @@ export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddCon
         <div className="sticky top-0 bg-gray-900 border-b border-gray-800 p-6 flex items-center justify-between z-10">
           <div>
             <h2 className="text-2xl font-bold text-white">{isEditMode ? 'Edit Contact' : 'Add New Contact'}</h2>
-            <p className="text-sm text-gray-400 mt-1">{isEditMode ? 'Update contact information' : 'Create a customer or supplier profile'}</p>
+            <p className="text-sm text-gray-400 mt-1">{isEditMode ? 'Update contact information' : 'Create a customer, supplier, or worker profile'}</p>
           </div>
           <button
             onClick={onClose}
@@ -334,6 +557,102 @@ export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddCon
             <X size={20} />
           </button>
         </div>
+
+        {/* Duplicate Detection Banner */}
+        {duplicateContact && !isEditMode && (
+          <div className="mx-6 mt-4 mb-0 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 mt-0.5">
+                <HelpCircle className="text-yellow-400" size={20} />
+              </div>
+              <div className="flex-1">
+                <h4 className="text-yellow-400 font-semibold mb-1">Duplicate Contact Detected</h4>
+                <p className="text-yellow-300/80 text-sm mb-3">
+                  A contact with mobile number <strong>{duplicateContact.mobile}</strong> already exists:
+                </p>
+                <div className="bg-gray-800/50 rounded p-3 mb-3">
+                  <p className="text-white font-medium">{duplicateContact.name}</p>
+                  <p className="text-gray-400 text-sm">
+                    Type: <span className="capitalize">{duplicateContact.type}</span>
+                    {duplicateContact.email && ` • ${duplicateContact.email}`}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      onClose();
+                      // Navigate to contact detail page
+                      window.location.href = `/dashboard/contacts/${duplicateContact.id}`;
+                    }}
+                    className="bg-yellow-500/20 border-yellow-500/50 text-yellow-300 hover:bg-yellow-500/30"
+                  >
+                    View Existing
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      // Close current modal
+                      onClose();
+                      
+                      // Fetch full contact data and trigger edit
+                      try {
+                        const { data: { session } } = await supabase.auth.getSession();
+                        if (!session) return;
+
+                        const { data: fullContact } = await supabase
+                          .from('contacts')
+                          .select('*')
+                          .eq('id', duplicateContact.id)
+                          .single();
+
+                        if (fullContact) {
+                          const existingContact: Contact = {
+                            id: fullContact.id,
+                            name: fullContact.name,
+                            mobile: fullContact.mobile,
+                            email: fullContact.email,
+                            type: fullContact.type as 'customer' | 'supplier' | 'worker' | 'both',
+                          };
+                          
+                          // Notify parent to open edit modal
+                          onSave(existingContact);
+                          
+                          // Dispatch custom event for parent to handle edit
+                          window.dispatchEvent(new CustomEvent('edit-contact', {
+                            detail: { contactId: duplicateContact.id }
+                          }));
+                        }
+                      } catch (err) {
+                        console.error('Error loading contact for edit:', err);
+                        toast.error('Failed to load contact for editing');
+                      }
+                    }}
+                    className="bg-blue-500/20 border-blue-500/50 text-blue-300 hover:bg-blue-500/30"
+                  >
+                    Edit Existing
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setDuplicateContact(null);
+                      setFormData({ ...formData, mobile: '' });
+                    }}
+                    className="bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
@@ -357,11 +676,23 @@ export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddCon
               className={cn(
                 'flex-1 px-4 py-3 rounded-lg font-medium transition-colors',
                 contactType === 'supplier'
-                  ? 'bg-blue-600 text-white'
+                  ? 'bg-purple-600 text-white'
                   : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
               )}
             >
               Supplier
+            </button>
+            <button
+              type="button"
+              onClick={() => setContactType('worker')}
+              className={cn(
+                'flex-1 px-4 py-3 rounded-lg font-medium transition-colors',
+                contactType === 'worker'
+                  ? 'bg-green-600 text-white'
+                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+              )}
+            >
+              Worker
             </button>
           </div>
 
@@ -394,15 +725,29 @@ export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddCon
                 <div>
                   <Label className="text-white mb-2 block">
                     Mobile Number <span className="text-red-400">*</span>
+                    {checkingDuplicate && (
+                      <span className="text-xs text-gray-400 ml-2">(Checking...)</span>
+                    )}
                   </Label>
                   <Input
                     type="tel"
                     required
                     value={formData.mobile}
-                    onChange={(e) => setFormData({ ...formData, mobile: e.target.value })}
+                    onChange={(e) => {
+                      setFormData({ ...formData, mobile: e.target.value });
+                      setDuplicateContact(null); // Clear duplicate when typing
+                    }}
                     placeholder="+92 300 1234567"
-                    className="bg-gray-800 border-gray-700 text-white"
+                    className={cn(
+                      "bg-gray-800 border-gray-700 text-white",
+                      duplicateContact && "border-yellow-500/50 focus:border-yellow-500"
+                    )}
                   />
+                  {duplicateContact && (
+                    <p className="text-xs text-yellow-400 mt-1">
+                      ⚠️ This mobile number is already in use
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -415,6 +760,32 @@ export function AddContactModal({ isOpen, onClose, onSave, editContact }: AddCon
                     className="bg-gray-800 border-gray-700 text-white"
                   />
                 </div>
+
+                {/* Worker Category - Only show for workers */}
+                {contactType === 'worker' && (
+                  <div>
+                    <Label className="text-white mb-2 block">
+                      Category <span className="text-red-400">*</span>
+                    </Label>
+                    <Select
+                      value={formData.worker_category}
+                      onValueChange={(value) => setFormData({ ...formData, worker_category: value })}
+                    >
+                      <SelectTrigger className="bg-gray-800 border-gray-700 text-white">
+                        <SelectValue placeholder="Select worker category" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-gray-800 border-gray-700">
+                        <SelectItem value="Dyer">Dyer (Rangrezi)</SelectItem>
+                        <SelectItem value="Tailor">Tailor (Darzi)</SelectItem>
+                        <SelectItem value="Embroiderer">Embroiderer (Kari)</SelectItem>
+                        <SelectItem value="Handwork">Handwork (Dastkari)</SelectItem>
+                        <SelectItem value="Designer">Designer</SelectItem>
+                        <SelectItem value="Master">Master</SelectItem>
+                        <SelectItem value="Other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
             )}
           </div>

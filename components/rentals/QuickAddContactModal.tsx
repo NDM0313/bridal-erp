@@ -11,7 +11,7 @@ export interface Contact {
   name: string;
   mobile?: string;
   email?: string;
-  type?: 'customer' | 'supplier' | 'both';
+  type?: 'customer' | 'supplier' | 'worker' | 'both';
   created_at?: string;
   updated_at?: string;
 }
